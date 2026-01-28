@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  whatsapp-discord-bot:
+    build: .
+    container_name: whatsapp-discord-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persistir sesión de WhatsApp
+      - whatsapp-session:/app/.wwebjs_auth
+      - whatsapp-cache:/app/.wwebjs_cache
+      # Persistir configuración
+      - ./config.json:/app/config.json
+    # Para ver el QR en los logs
+    stdin_open: true
+    tty: true
+    networks:
+      - bot-network
+
+volumes:
+  whatsapp-session:
+  whatsapp-cache:
+
+networks:
+  bot-network:
+    driver: bridge

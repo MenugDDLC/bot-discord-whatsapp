@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guía Rápida - WispByte Setup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #a0aec0;
+            margin-bottom: 40px;
+        }
+
+        .quick-start {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .step-container {
+            display: grid;
+            gap: 25px;
+            margin-top: 30px;
+        }
+
+        .step {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 25px;
+            border-left: 4px solid #667eea;
+            transition: all 0.3s;
+        }
+
+        .step:hover {
+            transform: translateX(5px);
+            background: rgba(255,255,255,0.08);
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .step-number {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.3em;
+            flex-shrink: 0;
+        }
+
+        .step-title {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .step-content {
+            color: #cbd5e0;
+            line-height: 1.7;
+            margin-left: 60px;
+        }
+
+        .code-box {
+            background: #1a1a2e;
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #50fa7b;
+            overflow-x: auto;
+        }
+
+        .warning {
+            background: rgba(255, 193, 7, 0.1);
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            color: #ffc107;
+        }
+
+        .success {
+            background: rgba(76, 175, 80, 0.1);
+            border-left: 4px solid #4caf50;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            color: #4caf50;
+        }
+
+        .info {
+            background: rgba(33, 150, 243, 0.1);
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            color: #2196f3;
+        }
+
+        .config-table {
+            width: 100%;
+            margin: 20px 0;
+            border-collapse: collapse;
+        }
+
+        .config-table th,
+        .config-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .config-table th {
+            background: rgba(102, 126, 234, 0.2);
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .config-table tr:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .icon {
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+
+        .checklist {
+            list-style: none;
+            margin: 15px 0;
+        }
+
+        .checklist li {
+            padding: 10px 0;
+            padding-left: 35px;
+            position: relative;
+        }
+
+        .checklist li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #4caf50;
+            font-weight: bold;
+            font-size: 1.3em;
+        }
+
+        .screenshot-placeholder {
+            background: rgba(255,255,255,0.05);
+            border: 2px dashed rgba(255,255,255,0.2);
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            color: #a0aec0;
+            margin: 20px 0;
+        }
+
+        .command-highlight {
+            background: rgba(102, 126, 234, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #667eea;
+            font-family: 'Courier New', monospace;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .step-content {
+                margin-left: 0;
+            }
+
+            .step-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Guía Rápida: Deploy en WispByte</h1>
+        <p class="subtitle">Configuración paso a paso del bot WhatsApp-Discord</p>
+
+        <div class="quick-start">
+            <h2 style="margin-bottom: 20px;">📋 Checklist Antes de Empezar</h2>
+            <ul class="checklist">
+                <li>Token del bot de Discord (desde discord.com/developers)</li>
+                <li>Cuenta en GitHub con el repositorio creado</li>
+                <li>Cuenta activa en WispByte</li>
+                <li>WhatsApp en tu teléfono listo para escanear QR</li>
+            </ul>
+        </div>
+
+        <div class="step-container">
+            <!-- Paso 1 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <div class="step-title">Crear Bot en Discord</div>
+                </div>
+                <div class="step-content">
+                    <p><span class="icon">🔗</span><strong>URL:</strong> <a href="https://discord.com/developers/applications" target="_blank" style="color: #667eea;">discord.com/developers/applications</a></p>
+                    
+                    <div class="info">
+                        <strong>Pasos:</strong>
+                        <ol style="margin-left: 20px; margin-top: 10px;">
+                            <li>Haz clic en "New Application"</li>
+                            <li>Ponle un nombre: "WhatsApp Bridge"</li>
+                            <li>Ve a "Bot" → "Add Bot"</li>
+                            <li>Haz clic en "Reset Token" y COPIA EL TOKEN</li>
+                        </ol>
+                    </div>
+
+                    <div class="warning">
+                        ⚠️ <strong>¡IMPORTANTE!</strong> Guarda el token en un lugar seguro. Lo necesitarás en el paso 3.
+                    </div>
+
+                    <p><strong>Activa estos Intents:</strong></p>
+                    <table class="config-table">
+                        <tr>
+                            <td>✓ Presence Intent</td>
+                            <td>✓ Server Members Intent</td>
+                            <td>✓ Message Content Intent</td>
+                        </tr>
+                    </table>
+
+                    <p style="margin-top: 15px;"><strong>Invitar el bot:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Ve a "OAuth2" → "URL Generator"</li>
+                        <li>Marca: <span class="command-highlight">bot</span> y <span class="command-highlight">applications.commands</span></li>
+                        <li>Permisos: Send Messages, Embed Links, Read Message History</li>
+                        <li>Copia la URL y ábrela para invitar el bot a tu servidor</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Paso 2 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <div class="step-title">Subir Código a GitHub</div>
+                </div>
+                <div class="step-content">
+                    <p><strong>Opción A: Desde tu computadora</strong></p>
+                    <div class="code-box">
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin https://github.com/TU_USUARIO/tu-repo.git
+git push -u origin main
+                    </div>
+
+                    <p><strong>Opción B: Directo en GitHub</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Crea un nuevo repositorio en GitHub</li>
+                        <li>Haz clic en "uploading an existing file"</li>
+                        <li>Arrastra todos los archivos del bot</li>
+                        <li>Haz commit</li>
+                    </ul>
+
+                    <div class="success">
+                        ✅ Archivos importantes que deben estar en GitHub:
+                        <ul style="margin-left: 20px; margin-top: 10px;">
+                            <li><span class="command-highlight">bot.js</span> - Código principal</li>
+                            <li><span class="command-highlight">package.json</span> - Dependencias</li>
+                            <li><span class="command-highlight">Dockerfile</span> - Para contenedor</li>
+                            <li><span class="command-highlight">.gitignore</span> - Archivos a ignorar</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paso 3 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <div class="step-title">Configurar Servidor en WispByte</div>
+                </div>
+                <div class="step-content">
+                    <p><strong>3.1 - Crear el servidor:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Ve a tu panel de WispByte</li>
+                        <li>Haz clic en "Crear Servidor" o "Create Server"</li>
+                        <li>Selecciona <span class="command-highlight">Node.js</span></li>
+                        <li>Elige la versión más reciente (Node.js 20 o superior)</li>
+                    </ul>
+
+                    <p style="margin-top: 20px;"><strong>3.2 - Imagen de Docker:</strong></p>
+                    <div class="info">
+                        Si te pide seleccionar imagen Docker, elige:
+                        <div class="code-box" style="margin-top: 10px;">
+nodejs_20
+                        </div>
+                        o
+                        <div class="code-box">
+ghcr.io/parkervcp/yolks:nodejs_20
+                        </div>
+                    </div>
+
+                    <p style="margin-top: 20px;"><strong>3.3 - Comando de inicio:</strong></p>
+                    <div class="warning">
+                        ⚠️ Este es el paso MÁS IMPORTANTE. Copia este comando EXACTAMENTE:
+                    </div>
+                    <div class="code-box">
+if [[ -d .git ]] && [[ ! -d node_modules ]]; then git pull; fi; if [[ ! -z ${NODE_PACKAGES} ]]; then /usr/local/bin/npm install ${NODE_PACKAGES}; fi; if [[ ! -f /home/container/package.json ]]; then /usr/local/bin/npm install; fi; if [[ -f package.json ]]; then /usr/local/bin/npm install; fi; /usr/local/bin/node /home/container/bot.js
+                    </div>
+
+                    <p style="margin-top: 20px;"><strong>3.4 - Variables de entorno:</strong></p>
+                    <div class="info">
+                        En la sección "Variables de Entorno" o "Environment Variables", agrega:
+                    </div>
+                    <table class="config-table">
+                        <thead>
+                            <tr>
+                                <th>Variable</th>
+                                <th>Valor</th>
+                                <th>Descripción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="command-highlight">DISCORD_TOKEN</span></td>
+                                <td>El token que copiaste del paso 1</td>
+                                <td>Token del bot de Discord</td>
+                            </tr>
+                            <tr>
+                                <td><span class="command-highlight">NODE_ENV</span></td>
+                                <td>production</td>
+                                <td>Modo de producción</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Paso 4 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">4</div>
+                    <div class="step-title">Conectar GitHub con WispByte</div>
+                </div>
+                <div class="step-content">
+                    <p><strong>Según tu captura de pantalla, WispByte tiene instalador de GitHub:</strong></p>
+                    
+                    <div class="success">
+                        <strong>Método Recomendado:</strong>
+                        <ol style="margin-left: 20px; margin-top: 10px;">
+                            <li>En tu servidor de WispByte, busca la sección "Instalación" o "Installation"</li>
+                            <li>Pega la URL de tu repositorio de GitHub:
+                                <div class="code-box" style="margin-top: 10px;">
+https://github.com/TU_USUARIO/whatsapp-discord-bot
+                                </div>
+                            </li>
+                            <li>WispByte clonará automáticamente el repositorio</li>
+                            <li>Las dependencias se instalarán cuando inicies el servidor</li>
+                        </ol>
+                    </div>
+
+                    <div class="info">
+                        <strong>Alternativa - Subir archivos manualmente:</strong>
+                        <ul style="margin-left: 20px; margin-top: 10px;">
+                            <li>Ve al "File Manager" en WispByte</li>
+                            <li>Sube estos archivos:
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li>bot.js</li>
+                                    <li>package.json</li>
+                                </ul>
+                            </li>
+                            <li>NO subas node_modules (se instalará automáticamente)</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paso 5 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">5</div>
+                    <div class="step-title">Iniciar y Conectar WhatsApp</div>
+                </div>
+                <div class="step-content">
+                    <p><strong>5.1 - Iniciar el servidor:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px;">
+                        <li>Haz clic en el botón "Start" o "Iniciar"</li>
+                        <li>Espera a que las dependencias se instalen (puede tardar 1-2 minutos)</li>
+                        <li>Observa la consola</li>
+                    </ul>
+
+                    <p style="margin-top: 20px;"><strong>5.2 - Escanear código QR:</strong></p>
+                    <div class="warning">
+                        En la consola aparecerá un código QR. ¡NO cierres esta ventana!
+                    </div>
+
+                    <div class="info">
+                        <strong>En tu teléfono:</strong>
+                        <ol style="margin-left: 20px; margin-top: 10px;">
+                            <li>Abre WhatsApp</li>
+                            <li>Toca los tres puntos (⋮) → "Dispositivos vinculados"</li>
+                            <li>Toca "Vincular un dispositivo"</li>
+                            <li>Escanea el QR que apareció en WispByte</li>
+                        </ol>
+                    </div>
+
+                    <div class="success">
+                        Si todo salió bien, verás en la consola:
+                        <div class="code-box" style="margin-top: 10px;">
+✅ WhatsApp conectado correctamente
+✅ Discord bot conectado como WhatsApp Bridge Bot
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paso 6 -->
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number">6</div>
+                    <div class="step-title">Configurar en Discord</div>
+                </div>
+                <div class="step-content">
+                    <p><strong>6.1 - Configurar el canal:</strong></p>
+                    <div class="info">
+                        En el canal de Discord donde quieres recibir los mensajes, escribe:
+                        <div class="code-box" style="margin-top: 10px;">
+!setcanal
+                        </div>
+                        El bot responderá: "✅ Canal configurado correctamente"
+                    </div>
+
+                    <p style="margin-top: 20px;"><strong>6.2 - Configurar el grupo de WhatsApp:</strong></p>
+                    <div class="info">
+                        Escribe el nombre EXACTO del grupo (con mayúsculas y espacios):
+                        <div class="code-box" style="margin-top: 10px;">
+!setgrupo Avisos Comunidad
+                        </div>
+                        El bot responderá: "✅ Grupo de WhatsApp configurado"
+                    </div>
+
+                    <p style="margin-top: 20px;"><strong>6.3 - Verificar configuración:</strong></p>
+                    <div class="code-box">
+!status
+                    </div>
+
+                    <div class="success" style="margin-top: 20px;">
+                        <strong>¡Listo! 🎉</strong>
+                        <p style="margin-top: 10px;">Los mensajes del grupo de WhatsApp ahora aparecerán automáticamente en tu canal de Discord.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Solución de problemas -->
+        <div class="quick-start" style="margin-top: 40px;">
+            <h2 style="margin-bottom: 20px;">🔧 Solución de Problemas</h2>
+            
+            <div class="step" style="border-color: #ff6b6b;">
+                <strong>❌ El bot no inicia</strong>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Verifica que el token de Discord esté en las variables de entorno</li>
+                    <li>Revisa que el comando de inicio termine en <span class="command-highlight">/bot.js</span></li>
+                    <li>Mira los logs en la consola de WispByte para ver errores</li>
+                </ul>
+            </div>
+
+            <div class="step" style="border-color: #ffc107; margin-top: 15px;">
+                <strong>⚠️ No aparece el código QR</strong>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Espera 1-2 minutos (las dependencias están instalándose)</li>
+                    <li>Verifica que la imagen Docker sea Node.js 18+</li>
+                    <li>Reinicia el servidor si tarda más de 3 minutos</li>
+                </ul>
+            </div>
+
+            <div class="step" style="border-color: #2196f3; margin-top: 15px;">
+                <strong>ℹ️ Los mensajes no llegan a Discord</strong>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Usa <span class="command-highlight">!status</span> para verificar la configuración</li>
+                    <li>El nombre del grupo debe ser EXACTAMENTE igual</li>
+                    <li>Asegúrate de que el bot tenga permisos en el canal</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Comandos rápidos -->
+        <div class="quick-start" style="margin-top: 30px;">
+            <h2 style="margin-bottom: 20px;">⚡ Comandos Rápidos</h2>
+            <table class="config-table">
+                <thead>
+                    <tr>
+                        <th>Comando</th>
+                        <th>Descripción</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="command-highlight">!setcanal</span></td>
+                        <td>Configura el canal actual para recibir mensajes</td>
+                    </tr>
+                    <tr>
+                        <td><span class="command-highlight">!setgrupo &lt;nombre&gt;</span></td>
+                        <td>Define el grupo de WhatsApp a escuchar</td>
+                    </tr>
+                    <tr>
+                        <td><span class="command-highlight">!status</span></td>
+                        <td>Muestra el estado y configuración actual</td>
+                    </tr>
+                    <tr>
+                        <td><span class="command-highlight">!ayuda</span></td>
+                        <td>Lista todos los comandos disponibles</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div style="text-align: center; margin-top: 40px; padding: 30px; color: #a0aec0;">
+            <p style="font-size: 1.2em; margin-bottom: 10px;">🎉 ¡Eso es todo!</p>
+            <p>Si tienes problemas, revisa los logs en la consola de WispByte</p>
+        </div>
+    </div>
+</body>
+</html>
