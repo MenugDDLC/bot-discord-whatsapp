@@ -21,27 +21,29 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Chromium para que Puppeteer lo encuentre
+# Configurar Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar y ejecutar instalación
+# Copiar archivos de dependencias
 COPY package*.json ./
+
+# Instalar dependencias
 RUN npm ci --only=production
 
-# Copiar el resto del código
+# Copiar código fuente
 COPY . .
 
-# Crear carpetas para la sesión de WhatsApp
+# Crear directorios necesarios
 RUN mkdir -p .wwebjs_auth .wwebjs_cache
 
-# Permisos para el usuario botuser
+# Usuario no root
 RUN useradd -m -u 1000 botuser && \
     chown -R botuser:botuser /app
 USER botuser
 
-# IMPORTANTE: Iniciar con index.js para que Render no apague el bot
-CMD ["node", "index.js"]
-
+# Comando de inicio
+CMD ["node", "bot.js"]
