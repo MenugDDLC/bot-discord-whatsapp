@@ -7,27 +7,16 @@ const CONFIG_FILE = './config.json';
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const WHATSAPP_PHONE = process.env.WHATSAPP_PHONE;
 
-// Configuración inicial
-let config = {
-    targetChannelId: null,
-    communityName: '✨📖 El Club De Monika 🗡️✨',
-    channelName: 'Avisos'
-};
-
+let config = { targetChannelId: null, communityName: '✨📖 El Club De Monika 🗡️✨', channelName: 'Avisos' };
 if (fs.existsSync(CONFIG_FILE)) {
-    try {
-        const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-        config = { ...config, ...savedConfig };
-    } catch (e) { console.error('Error al cargar config.json'); }
+    try { config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) { console.error("Error config"); }
 }
-
 const saveConfig = () => fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 
 const discordClient = new DiscordClient({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-// Configuración de WhatsApp con ruta de Chromium corregida
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -38,71 +27,70 @@ const whatsappClient = new WhatsAppClient({
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--no-zygote',
-            '--single-process'
-        ]
+            '--disable-extensions'
+        ],
+        // Esto engaña a WhatsApp para que crea que eres un Chrome real
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 });
 
-// --- SISTEMA DE EMPAREJAMIENTO (FIX PARA ERROR 't') ---
+// --- FIX PARA ERROR 't' (REINTENTOS) ---
 whatsappClient.on('qr', async () => {
     if (WHATSAPP_PHONE) {
-        try {
-            console.log('⏳ Esperando 10s para que la página de WhatsApp cargue funciones internas...');
-            await new Promise(resolve => setTimeout(resolve, 10000)); 
+        let attempts = 0;
+        const maxAttempts = 3;
 
-            console.log(`📲 Solicitando código para: ${WHATSAPP_PHONE}`);
-            const code = await whatsappClient.requestPairingCode(WHATSAPP_PHONE);
-            
-            console.log('\n' + '═'.repeat(40));
-            console.log(`🔑 CÓDIGO DE VINCULACIÓN: ${code}`);
-            console.log('═'.repeat(40) + '\n');
-        } catch (err) {
-            console.error('❌ Error al generar código:', err.message);
-        }
+        const requestWithRetry = async () => {
+            try {
+                attempts++;
+                console.log(`⏳ Intento ${attempts}: Esperando carga completa de WA Web...`);
+                await new Promise(r => setTimeout(r, 15000)); // 15 seg para seguridad
+
+                const pairingCode = await whatsappClient.requestPairingCode(WHATSAPP_PHONE);
+                console.log('\n' + '═'.repeat(30));
+                console.log(`🔑 TU CÓDIGO: ${pairingCode}`);
+                console.log('═'.repeat(30) + '\n');
+            } catch (err) {
+                console.error(`❌ Error en intento ${attempts}:`, err.message);
+                if (attempts < maxAttempts) {
+                    console.log('🔄 Reintentando en 10 segundos...');
+                    setTimeout(requestWithRetry, 10000);
+                }
+            }
+        };
+        requestWithRetry();
     }
 });
 
-whatsappClient.on('ready', () => console.log('✅ WhatsApp Conectado!'));
+whatsappClient.on('ready', () => console.log('✅ Conectado a WhatsApp'));
 
-// Reenvío de mensajes
 whatsappClient.on('message', async (message) => {
     try {
         const chat = await message.getChat();
         if (!chat.isGroup || !config.targetChannelId) return;
-
         if (chat.name.toLowerCase().includes(config.channelName.toLowerCase())) {
             const channel = await discordClient.channels.fetch(config.targetChannelId);
             if (channel) {
                 const contact = await message.getContact();
                 const embed = new EmbedBuilder()
                     .setAuthor({ name: `📱 ${contact.pushname || contact.number}` })
-                    .setDescription(message.body || '*Archivo multimedia*')
+                    .setDescription(message.body || '*Multimedia*')
                     .setColor(0x25D366)
-                    .setFooter({ text: `${config.communityName} → ${chat.name}` })
                     .setTimestamp();
-
                 await channel.send({ embeds: [embed] });
             }
         }
-    } catch (e) { console.error('Error en reenvío:', e.message); }
+    } catch (e) { console.error('Error reenvío:', e); }
 });
 
-// Comandos de Discord
 discordClient.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
-
     if (msg.content.startsWith('!setcanal')) {
         config.targetChannelId = msg.channel.id;
         saveConfig();
         msg.reply('✅ Canal configurado.');
     }
-
-    if (msg.content === '!status') {
-        const waStatus = whatsappClient.info ? '✅ Conectado' : '❌ Desconectado';
-        msg.reply(`📊 **Estado:**\n• WhatsApp: ${waStatus}\n• Discord: ✅ Online`);
-    }
 });
 
-// Iniciar ambos servicios
 whatsappClient.initialize();
 discordClient.login(DISCORD_TOKEN);
