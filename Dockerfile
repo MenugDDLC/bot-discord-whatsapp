@@ -1,6 +1,6 @@
 FROM node:18-bullseye
 
-# Instalar Chromium y dependencias necesarias para Puppeteer
+# Instalar Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -9,26 +9,19 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar variables de entorno para Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
-
-# Copiar archivos de dependencias
 COPY package*.json ./
-
-# Instalar dependencias (usamos install porque no hay lockfile)
 RUN npm install --omit=dev
-
-# Copiar el resto del código
 COPY . .
 
-# Crear directorios de sesión con permisos totales
+# Permisos para archivos de sesión
 RUN mkdir -p .wwebjs_auth .wwebjs_cache && chmod -R 777 .wwebjs_auth .wwebjs_cache
 
-# Ejecutar como root para garantizar acceso a Chromium en Render
+# Ejecutar como root es necesario para Puppeteer en Render Free
 USER root
 
-# Comando de inicio (ejecuta el servidor web que luego llama al bot)
+EXPOSE 3000
 CMD ["node", "index.js"]
