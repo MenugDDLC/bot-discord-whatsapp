@@ -31,19 +31,18 @@ WORKDIR /app
 # Copiar archivos de dependencias
 COPY package*.json ./
 
-# Reemplaza la línea 35 de tu Dockerfile
+# Instalar dependencias usando install para evitar errores de package-lock
 RUN npm install --omit=dev
 
-# Copiar código fuente
+# Copiar el resto del código
 COPY . .
 
-# Crear directorios necesarios
+# Crear directorios necesarios para la sesión
 RUN mkdir -p .wwebjs_auth .wwebjs_cache
 
-# Usuario no root
-RUN useradd -m -u 1000 botuser && \
-    chown -R botuser:botuser /app
-USER botuser
+# Ejecutamos como root para evitar el error de useradd/chown en Render
+# Render maneja la seguridad de sus contenedores internamente
+USER root
 
-# Comando de inicio
-CMD ["node", "bot.js"]
+# Comando de inicio usando el index.js (servidor web)
+CMD ["node", "index.js"]
