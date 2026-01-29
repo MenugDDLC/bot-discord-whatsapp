@@ -31,8 +31,8 @@ WORKDIR /app
 # Copiar archivos de dependencias
 COPY package*.json ./
 
-# Instalar dependencias
-RUN npm ci --only=production
+# Reemplaza la línea 35 de tu Dockerfile
+RUN npm install --omit=dev
 
 # Copiar código fuente
 COPY . .
