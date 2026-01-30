@@ -12,8 +12,8 @@ const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
     new SlashCommandBuilder()
         .setName('configurar')
-        .setDescription('Vincula el grupo y el canal de reenvío')
-        .addStringOption(option => option.setName('nombre').setDescription('Nombre del grupo (ej: Monika)').setRequired(true))
+        .setDescription('Vincula el grupo y el canal')
+        .addStringOption(option => option.setName('nombre').setDescription('Nombre del grupo').setRequired(true))
         .addChannelOption(option => option.setName('canal').setDescription('Canal de Discord').addChannelTypes(ChannelType.GuildText).setRequired(false)),
     new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores')
 ].map(command => command.toJSON());
@@ -29,20 +29,18 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// FUNCIÓN AUXILIAR: Responde a Discord sin riesgo de error 40060
+// Responde de forma segura evitando el timeout
 async function safeReply(interaction, content, isEphemeral = false) {
     try {
         const options = { content: content };
         if (isEphemeral) options.flags = [MessageFlags.Ephemeral];
 
         if (interaction.deferred || interaction.replied) {
-            return await interaction.editReply(options);
+            return await interaction.editReply(options).catch(() => null);
         } else {
-            return await interaction.reply(options);
+            return await interaction.reply(options).catch(() => null);
         }
-    } catch (e) {
-        console.error("Error al intentar responder a la interacción:", e.message);
-    }
+    } catch (e) { console.log("Error safeReply:", e.message); }
 }
 
 async function sendToDiscord(msg, chatName, prefix = "") {
@@ -64,13 +62,13 @@ async function sendToDiscord(msg, chatName, prefix = "") {
         const files = [];
         if (msg.hasMedia) {
             const media = await msg.downloadMedia().catch(() => null);
-            if (media && media.mimetype?.startsWith('image/')) {
+            if (media && media.data) {
                 const buffer = Buffer.from(media.data, 'base64');
                 files.push(new AttachmentBuilder(buffer, { name: 'imagen.png' }));
                 embed.setImage('attachment://imagen.png');
             }
         }
-        await channel.send({ embeds: [embed], files: files });
+        await channel.send({ embeds: [embed], files: files }).catch(() => null);
     } catch (e) { console.log("Error reenvío:", e.message); }
 }
 
@@ -78,8 +76,8 @@ whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WA Ready')
 
 whatsappClient.on('message', async (msg) => {
     if (!isWaReady) return;
-    const chat = await msg.getChat();
-    if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
+    const chat = await msg.getChat().catch(() => null);
+    if (chat && bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
         await sendToDiscord(msg, chat.name);
     }
 });
@@ -87,49 +85,49 @@ whatsappClient.on('message', async (msg) => {
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    if (!isWaReady) {
+        return await safeReply(interaction, "⏳ WhatsApp aún no está listo. Verifica los logs de Koyeb para ver el QR.", true);
+    }
+
     try {
-        if (!isWaReady) {
-            return await safeReply(interaction, "⏳ WA no está listo aún. Espera el mensaje 'WA Ready' en la consola.", true);
-        }
+        // RESPUESTA INSTANTÁNEA para evitar el error de "La aplicación no respondió"
+        await interaction.deferReply().catch(() => {});
 
         if (interaction.commandName === 'configurar') {
-            await interaction.deferReply(); // Gana tiempo
-            const nombre = interaction.options.getString('nombre');
-            const canal = interaction.options.getChannel('canal') || interaction.channel;
+            const nombreBusqueda = interaction.options.getString('nombre');
+            const canalDestino = interaction.options.getChannel('canal') || interaction.channel;
 
-            const chats = await whatsappClient.getChats();
-            const target = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombre.toLowerCase()));
+            // Buscamos los chats SIN BLOQUEAR la respuesta de Discord
+            const chats = await whatsappClient.getChats().catch(() => []);
+            const target = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombreBusqueda.toLowerCase()));
 
             if (target) {
                 bridgeConfig.whatsappGroupName = target.name;
-                bridgeConfig.discordChannelId = canal.id;
-                await safeReply(interaction, `✅ **Puente configurado**\n📱 Grupo: \`${target.name}\`\n📍 Canal: <#${canal.id}>`);
+                bridgeConfig.discordChannelId = canalDestino.id;
+                await safeReply(interaction, `✅ **Puente configurado**\n📱 Grupo: \`${target.name}\`\n📍 Canal: <#${canalDestino.id}>`);
             } else {
-                await safeReply(interaction, `❌ No encontré el grupo "${nombre}".`);
+                await safeReply(interaction, `❌ No encontré ningún grupo que contenga "${nombreBusqueda}".`);
             }
         }
 
         if (interaction.commandName === 'ultimo') {
             if (!bridgeConfig.whatsappGroupName) return await safeReply(interaction, "❌ Configura primero el grupo.", true);
             
-            await interaction.deferReply();
-            const chats = await whatsappClient.getChats();
+            const chats = await whatsappClient.getChats().catch(() => []);
             const target = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
             if (target) {
                 const messages = await target.fetchMessages({ limit: 2 });
                 for (let i = 0; i < messages.length; i++) {
                     await sendToDiscord(messages[i], target.name, i === 0 ? "Anterior: " : "Último: ");
                 }
-                await safeReply(interaction, "✅ Historial enviado.");
+                await safeReply(interaction, "✅ Mensajes recuperados.");
             }
         }
 
         if (interaction.commandName === 'status') {
             await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'} | Canal: <#${bridgeConfig.discordChannelId || 'No definido'}>`);
         }
-    } catch (e) { 
-        console.log("Error manejado en interacción:", e.message); 
-    }
+    } catch (e) { console.log("Error interacción:", e.message); }
 });
 
 whatsappClient.initialize().catch(() => {});
@@ -144,6 +142,5 @@ let updateQR = null;
 whatsappClient.on('qr', (qr) => { isWaReady = false; if (updateQR) updateQR(qr); });
 module.exports.setQRHandler = (handler) => { updateQR = handler; };
 
-// Evitar que el bot se caiga por errores no capturados
-process.on('uncaughtException', (err) => console.log('Excepción capturada:', err.message));
-process.on('unhandledRejection', (reason) => console.log('Rechazo capturado:', reason));
+process.on('uncaughtException', (err) => console.log('Exception:', err.message));
+process.on('unhandledRejection', (reason) => console.log('Rejection:', reason));
