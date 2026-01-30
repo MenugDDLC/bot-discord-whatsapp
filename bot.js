@@ -9,8 +9,14 @@ let bridgeConfig = { whatsappGroupName: null, discordChannelId: null };
 
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
-    new SlashCommandBuilder().setName('configurar').setDescription('Vincula el grupo de Monika automáticamente'),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores (Solo una vez)')
+    new SlashCommandBuilder()
+        .setName('configurar')
+        .setDescription('Vincula el grupo poniendo su nombre')
+        .addStringOption(option => 
+            option.setName('nombre')
+            .setDescription('Nombre del grupo (ej: Monika)')
+            .setRequired(true)),
+    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores con imágenes')
 ].map(command => command.toJSON());
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
@@ -24,7 +30,7 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// Función para enviar mensajes con soporte de IMAGEN
+// Función para enviar a Discord con IMAGEN y TEXTO
 async function sendToDiscord(msg, chatName, prefix = "") {
     if (!bridgeConfig.discordChannelId) return;
     const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
@@ -39,13 +45,12 @@ async function sendToDiscord(msg, chatName, prefix = "") {
             name: `${prefix}${contact.pushname || contact.number}`, 
             iconURL: pfp || 'https://i.imgur.com/83p7ihD.png' 
         })
-        .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Imagen adjunta]" : "Mensaje vacío"))
+        .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Imagen]" : "Mensaje vacío"))
         .setFooter({ text: `WhatsApp: ${chatName}` })
         .setTimestamp(new Date(msg.timestamp * 1000));
 
     const files = [];
 
-    // Lógica para DESCARGAR IMAGEN
     if (msg.hasMedia) {
         try {
             const media = await msg.downloadMedia();
@@ -55,15 +60,12 @@ async function sendToDiscord(msg, chatName, prefix = "") {
                 embed.setImage('attachment://imagen_wa.png');
                 files.push(attachment);
             }
-        } catch (e) {
-            console.error("Error descargando media:", e);
-        }
+        } catch (e) { console.error("Error media:", e); }
     }
 
     await channel.send({ embeds: [embed], files: files });
 }
 
-// Reenvío en tiempo real
 whatsappClient.on('message', async (msg) => {
     const chat = await msg.getChat();
     if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
@@ -75,33 +77,34 @@ discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'configurar') {
-        await interaction.reply(`🎀 Buscando el club...`);
+        const nombreBuscado = interaction.options.getString('nombre');
+        await interaction.reply(`🎀 Buscando un grupo que coincida con "${nombreBuscado}"...`);
+
         const chats = await whatsappClient.getChats();
-        const targetChat = chats.find(c => c.isGroup && c.name.includes('Monika'));
+        // Busca un grupo que CONTENGA el texto que escribiste (ignora mayúsculas/minúsculas)
+        const targetChat = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombreBuscado.toLowerCase()));
 
         if (targetChat) {
             bridgeConfig.whatsappGroupName = targetChat.name;
             bridgeConfig.discordChannelId = interaction.channelId;
-            await interaction.editReply(`✅ **Conectado a:** \`${targetChat.name}\`.\nAhora usa \`/ultimo\` para traer los mensajes previos.`);
+            await interaction.editReply(`✅ **¡Encontrado y Vinculado!**\n📱 Nombre real: \`${targetChat.name}\`\n📍 Canal: <#${interaction.channelId}>`);
         } else {
-            await interaction.editReply(`❌ No se encontró el grupo con "Monika" en el nombre.`);
+            await interaction.editReply(`❌ No encontré ningún grupo con ese nombre. Intenta poner solo una palabra clave (ej: "Monika").`);
         }
     }
 
     if (interaction.commandName === 'ultimo') {
-        if (!bridgeConfig.whatsappGroupName) return await interaction.reply("❌ Usa `/configurar` primero.");
-
-        await interaction.reply("📨 Recuperando los 2 mensajes anteriores con imágenes...");
+        if (!bridgeConfig.whatsappGroupName) return await interaction.reply("❌ Configura el grupo primero.");
+        
+        await interaction.reply("📨 Recuperando los últimos 2 mensajes...");
         const chats = await whatsappClient.getChats();
         const targetChat = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
 
         if (targetChat) {
             const messages = await targetChat.fetchMessages({ limit: 2 });
             for (let i = 0; i < messages.length; i++) {
-                // Enviamos los mensajes. El prefijo ayuda a saber cuál es el más viejo.
                 await sendToDiscord(messages[i], targetChat.name, i === 0 ? "Anterior: " : "Último: ");
             }
-            await interaction.followUp("✨ Historial recuperado. El bot seguirá reenviando lo nuevo automáticamente.");
         }
     }
 });
