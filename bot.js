@@ -6,10 +6,10 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const DEFAULT_COMMUNITY_NAME = "✨📖𝑬𝒍 𝑪𝒍𝒖𝒃 𝑫𝒆 𝑴𝒐𝒏𝒊𝒌𝒂 ✒✨";
 
-// MEMORIA TEMPORAL: Guardará los últimos 5 mensajes recibidos
 let lastMessages = [];
 let bridgeConfig = { whatsappGroupName: DEFAULT_COMMUNITY_NAME, discordChannelId: null };
 let isWaReady = false;
+let updateQR = null; // Variable para el manejador de QR
 
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado del puente'),
@@ -31,6 +31,7 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
+// --- Funciones Auxiliares ---
 async function safeReply(interaction, content) {
     try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content }).catch(() => null);
@@ -45,17 +46,23 @@ async function sendToDiscord(msg, chatName, isHistory = false) {
         if (!channel) return;
 
         const contact = await msg.getContact().catch(() => ({ pushname: 'Usuario' }));
-        
         const embed = new EmbedBuilder()
             .setColor(isHistory ? '#7289da' : '#fb92b3') 
-            .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "") + (contact.pushname || "Usuario WhatsApp") })
-            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Multimedia]" : "Mensaje sin texto"))
-            .setFooter({ text: `Origen: ${chatName}` })
+            .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "") + (contact.pushname || "Usuario") })
+            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Multimedia]" : "Mensaje vacío"))
+            .setFooter({ text: `WA: ${chatName}` })
             .setTimestamp(new Date(msg.timestamp * 1000));
 
         await channel.send({ embeds: [embed] }).catch(() => null);
     } catch (e) { console.log("Error reenvío:", e.message); }
 }
+
+// --- Eventos WhatsApp ---
+whatsappClient.on('qr', (qr) => {
+    isWaReady = false;
+    if (updateQR) updateQR(qr); // Enviamos el QR a index.js
+    console.log('Nuevo QR generado. Escanéalo en la URL de tu app.');
+});
 
 whatsappClient.on('ready', async () => {
     isWaReady = true;
@@ -65,46 +72,37 @@ whatsappClient.on('ready', async () => {
     if (target) bridgeConfig.whatsappGroupName = target.name;
 });
 
-// EVENTO DE MENSAJE: Aquí guardamos en la "Memoria Flash"
 whatsappClient.on('message', async (msg) => {
-    if (!isWaReady) return;
     const chat = await msg.getChat().catch(() => null);
-    
     if (chat && chat.name === bridgeConfig.whatsappGroupName) {
-        // Guardamos en la lista (máximo 5)
         lastMessages.push(msg);
         if (lastMessages.length > 5) lastMessages.shift();
-        
-        // Reenvío normal en tiempo real
         await sendToDiscord(msg, chat.name);
     }
 });
 
+// --- Eventos Discord ---
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'configurar') {
-        const canal = interaction.options.getChannel('canal');
-        bridgeConfig.discordChannelId = canal.id;
-        await safeReply(interaction, `✅ Canal configurado: <#${canal.id}>. Esperando mensajes de "${bridgeConfig.whatsappGroupName}"...`);
+        bridgeConfig.discordChannelId = interaction.options.getChannel('canal').id;
+        await safeReply(interaction, `✅ Canal vinculado a "${bridgeConfig.whatsappGroupName}"`);
     }
 
     if (interaction.commandName === 'status') {
-        await safeReply(interaction, `📊 **Estado**\nWA: ${isWaReady ? '✅' : '⏳'}\nGrupo: \`${bridgeConfig.whatsappGroupName}\`\nCanal: <#${bridgeConfig.discordChannelId || 'No definido'}>`);
+        await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nGrupo: \`${bridgeConfig.whatsappGroupName}\``);
     }
 
     if (interaction.commandName === 'ultimo') {
-        if (lastMessages.length === 0) {
-            return await safeReply(interaction, "📭 No hay mensajes guardados en esta sesión todavía.");
-        }
+        if (lastMessages.length === 0) return await safeReply(interaction, "📭 No hay mensajes en memoria.");
         await interaction.deferReply();
-        for (const m of lastMessages) {
-            await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
-        }
-        await safeReply(interaction, "✅ Se han reenviado los últimos mensajes detectados.");
+        for (const m of lastMessages) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
+        await safeReply(interaction, "✅ Historial enviado.");
     }
 });
 
+// --- Inicialización ---
 whatsappClient.initialize().catch(() => {});
 discordClient.login(DISCORD_TOKEN);
 
@@ -112,3 +110,8 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => {
     try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
 })();
+
+// --- EXPORTACIÓN CRÍTICA ---
+module.exports.setQRHandler = (handler) => { 
+    updateQR = handler; 
+};
