@@ -1,23 +1,27 @@
 require('dotenv').config();
-const { Client: DiscordClient, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, MessageFlags } = require('discord.js');
+const { Client: DiscordClient, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, MessageFlags, ChannelType } = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-// Memoria persistente básica (mientras la instancia esté viva)
-let bridgeConfig = { 
-    whatsappGroupName: process.env.DEFAULT_GROUP || null, 
-    discordChannelId: process.env.DEFAULT_CHANNEL || null 
-};
+let bridgeConfig = { whatsappGroupName: null, discordChannelId: null };
 let isWaReady = false;
 
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
     new SlashCommandBuilder()
         .setName('configurar')
-        .setDescription('Vincula el grupo por nombre')
-        .addStringOption(option => option.setName('nombre').setDescription('Nombre del grupo').setRequired(true)),
+        .setDescription('Vincula el grupo y el canal de reenvío')
+        .addStringOption(option => 
+            option.setName('nombre')
+            .setDescription('Nombre del grupo (ej: Monika)')
+            .setRequired(true))
+        .addChannelOption(option => 
+            option.setName('canal')
+            .setDescription('Canal de Discord donde llegarán los mensajes')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(false)), // Si no se pone, usa el actual
     new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores')
 ].map(command => command.toJSON());
 
@@ -32,7 +36,7 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- Lógica de Reenvío ---
+// Función de envío
 async function sendToDiscord(msg, chatName, prefix = "") {
     try {
         if (!bridgeConfig.discordChannelId) return;
@@ -59,14 +63,10 @@ async function sendToDiscord(msg, chatName, prefix = "") {
             }
         }
         await channel.send({ embeds: [embed], files: files });
-    } catch (e) { console.log("Error en reenvío:", e.message); }
+    } catch (e) { console.log("Error reenvío:", e.message); }
 }
 
-// --- Eventos WhatsApp ---
-whatsappClient.on('ready', () => {
-    isWaReady = true;
-    console.log('✅ WhatsApp Conectado.');
-});
+whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WA Ready'); });
 
 whatsappClient.on('message', async (msg) => {
     if (!isWaReady) return;
@@ -76,50 +76,49 @@ whatsappClient.on('message', async (msg) => {
     }
 });
 
-// --- Interacciones Discord ---
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (!isWaReady) {
-        // Corregido: Uso de flags en lugar de ephemeral: true
-        return await interaction.reply({ 
-            content: "⏳ WhatsApp aún no está listo.", 
-            flags: [MessageFlags.Ephemeral] 
-        }).catch(() => {});
+        return await interaction.reply({ content: "⏳ WA no está listo.", flags: [MessageFlags.Ephemeral] });
     }
 
     try {
         if (interaction.commandName === 'configurar') {
             await interaction.deferReply();
             const nombre = interaction.options.getString('nombre');
+            const canal = interaction.options.getChannel('canal') || interaction.channel;
+
             const chats = await whatsappClient.getChats();
             const target = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombre.toLowerCase()));
 
             if (target) {
                 bridgeConfig.whatsappGroupName = target.name;
-                bridgeConfig.discordChannelId = interaction.channelId;
-                await interaction.editReply(`✅ Vinculado a: \`${target.name}\`.`);
+                bridgeConfig.discordChannelId = canal.id;
+                await interaction.editReply(`✅ **Puente configurado**\n📱 Grupo: \`${target.name}\`\n📍 Canal: <#${canal.id}>`);
             } else {
-                await interaction.editReply(`❌ No encontré "${nombre}".`);
+                await interaction.editReply(`❌ No encontré el grupo "${nombre}".`);
             }
         }
 
         if (interaction.commandName === 'ultimo') {
-            if (!bridgeConfig.whatsappGroupName) return await interaction.editReply("❌ Configura el grupo primero.");
+            if (!bridgeConfig.whatsappGroupName) return await interaction.editReply("❌ Configura primero.");
             await interaction.deferReply();
             const chats = await whatsappClient.getChats();
             const target = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
             if (target) {
                 const messages = await target.fetchMessages({ limit: 2 });
-                for (const m of messages) await sendToDiscord(m, target.name);
+                for (let i = 0; i < messages.length; i++) {
+                    await sendToDiscord(messages[i], target.name, i === 0 ? "Anterior: " : "Último: ");
+                }
                 await interaction.editReply("✅ Historial enviado.");
             }
         }
 
         if (interaction.commandName === 'status') {
-            await interaction.reply(`📊 WA: ${isWaReady ? '✅' : '⏳'} | Grupo: \`${bridgeConfig.whatsappGroupName || 'N/A'}\``);
+            await interaction.reply(`📊 WA: ${isWaReady ? '✅' : '⏳'} | Canal: <#${bridgeConfig.discordChannelId || 'No definido'}>`);
         }
-    } catch (e) { console.log("Error en interacción:", e.message); }
+    } catch (e) { console.log("Error:", e.message); }
 });
 
 whatsappClient.initialize().catch(() => {});
