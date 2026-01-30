@@ -1,28 +1,20 @@
 require('dotenv').config();
-const http = require('http'); // Para mantener viva la instancia
 const { Client: DiscordClient, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const PORT = process.env.PORT || 8080;
 
-// --- SERVIDOR WEB PARA KOYEB ---
-// Esto evita el error "Application exited with code 1"
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot is running');
-}).listen(PORT);
-
+// Configuración global
 let bridgeConfig = { whatsappGroupName: null, discordChannelId: null };
 
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
+    new SlashCommandBuilder().setName('status').setDescription('Ver estado del puente'),
     new SlashCommandBuilder()
         .setName('configurar')
         .setDescription('Vincula el grupo por nombre')
         .addStringOption(option => option.setName('nombre').setDescription('Nombre del grupo').setRequired(true)),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores')
+    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores con imágenes')
 ].map(command => command.toJSON());
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
@@ -31,19 +23,20 @@ const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        executablePath: '/usr/bin/chromium', // Ruta estándar en entornos Linux/Koyeb
+        executablePath: '/usr/bin/chromium',
         args: [
             '--no-sandbox', 
             '--disable-setuid-sandbox', 
-            '--disable-dev-shm-usage', 
-            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process'
+            '--disable-gpu'
         ]
     }
 });
 
+// Función para enviar a Discord
 async function sendToDiscord(msg, chatName, prefix = "") {
     try {
         if (!bridgeConfig.discordChannelId) return;
@@ -66,7 +59,7 @@ async function sendToDiscord(msg, chatName, prefix = "") {
         const files = [];
         if (msg.hasMedia) {
             const media = await msg.downloadMedia().catch(() => null);
-            if (media && media.mimetype.startsWith('image/')) {
+            if (media && media.mimetype && media.mimetype.startsWith('image/')) {
                 const buffer = Buffer.from(media.data, 'base64');
                 const attachment = new AttachmentBuilder(buffer, { name: 'imagen_wa.png' });
                 embed.setImage('attachment://imagen_wa.png');
@@ -74,11 +67,10 @@ async function sendToDiscord(msg, chatName, prefix = "") {
             }
         }
         await channel.send({ embeds: [embed], files: files });
-    } catch (error) {
-        console.error("Error en el puente:", error);
-    }
+    } catch (e) { console.error("Error enviando a Discord:", e); }
 }
 
+// Eventos de WhatsApp
 whatsappClient.on('message', async (msg) => {
     const chat = await msg.getChat();
     if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
@@ -86,12 +78,13 @@ whatsappClient.on('message', async (msg) => {
     }
 });
 
+// Eventos de Discord
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'configurar') {
         const nombreBuscado = interaction.options.getString('nombre');
-        await interaction.reply(`🔍 Buscando "${nombreBuscado}"...`);
+        await interaction.reply(`🔍 Buscando grupo con "${nombreBuscado}"...`);
 
         const chats = await whatsappClient.getChats();
         const targetChat = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombreBuscado.toLowerCase()));
@@ -99,15 +92,15 @@ discordClient.on('interactionCreate', async interaction => {
         if (targetChat) {
             bridgeConfig.whatsappGroupName = targetChat.name;
             bridgeConfig.discordChannelId = interaction.channelId;
-            await interaction.editReply(`✅ Vinculado a: \`${targetChat.name}\``);
+            await interaction.editReply(`✅ Vinculado a: \`${targetChat.name}\`\nUsa \`/ultimo\` para traer el historial.`);
         } else {
-            await interaction.editReply(`❌ No se encontró el grupo.`);
+            await interaction.editReply(`❌ No encontré el grupo. Asegúrate de que el bot esté adentro.`);
         }
     }
 
     if (interaction.commandName === 'ultimo') {
-        if (!bridgeConfig.whatsappGroupName) return await interaction.reply("❌ Usa /configurar.");
-        await interaction.reply("📨 Recuperando 2 mensajes...");
+        if (!bridgeConfig.whatsappGroupName) return await interaction.reply("❌ Usa /configurar primero.");
+        await interaction.reply("📨 Recuperando historial reciente...");
         const chats = await whatsappClient.getChats();
         const targetChat = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
         if (targetChat) {
@@ -115,16 +108,23 @@ discordClient.on('interactionCreate', async interaction => {
             for (const m of messages) await sendToDiscord(m, targetChat.name);
         }
     }
+
+    if (interaction.commandName === 'status') {
+        await interaction.reply(`📊 **WA:** ✅ | **Discord:** ✅ | **Grupo:** \`${bridgeConfig.whatsappGroupName || 'Sin configurar'}\``);
+    }
 });
 
-whatsappClient.initialize();
+// Inicialización
+whatsappClient.initialize().catch(err => console.error("Error WA Init:", err));
 discordClient.login(DISCORD_TOKEN);
 
+// Registro de comandos
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => {
     try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
 })();
 
+// Manejo de QR para index.js
 let updateQR = null;
 whatsappClient.on('qr', (qr) => { if (updateQR) updateQR(qr); });
 module.exports.setQRHandler = (handler) => { updateQR = handler; };
