@@ -27,14 +27,14 @@ const commands = [
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
-// --- CLIENTE WHATSAPP CON TIMEOUTS PARA KOYEB ---
+// --- CLIENTE WHATSAPP ---
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
     qrMaxRetries: 10,
     puppeteer: {
         headless: true,
         executablePath: '/usr/bin/chromium',
-        protocolTimeout: 0, // Desactiva el timeout de protocolo para evitar el error de Runtime.evaluate
+        protocolTimeout: 0, 
         args: [
             '--no-sandbox', 
             '--disable-setuid-sandbox', 
@@ -46,7 +46,6 @@ const whatsappClient = new WhatsAppClient({
             '--no-first-run'
         ]
     },
-    // Forzamos una versión de WA Web para evitar lentitud en la carga inicial
     webVersionCache: {
         type: 'remote',
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
@@ -98,12 +97,11 @@ async function sendToDiscord(msg, chatName) {
 whatsappClient.on('ready', async () => {
     isWaReady = true;
     console.log('✅ WhatsApp Conectado.');
-
     const chats = await whatsappClient.getChats().catch(() => []);
     const target = chats.find(c => c.name.includes(DEFAULT_COMMUNITY_NAME));
     if (target) {
         bridgeConfig.whatsappGroupName = target.name;
-        console.log(`📢 Comunidad "${target.name}" vinculada por defecto.`);
+        console.log(`📢 Comunidad vinculada: ${target.name}`);
     }
 });
 
@@ -117,7 +115,7 @@ whatsappClient.on('message', async (msg) => {
 
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
-    if (!isWaReady) return await safeReply(interaction, "⏳ WhatsApp aún cargando...", true);
+    if (!isWaReady) return await safeReply(interaction, "⏳ WA cargando...", true);
 
     try {
         if (interaction.commandName === 'configurar') {
@@ -132,4 +130,28 @@ discordClient.on('interactionCreate', async interaction => {
             }
 
             if (nuevoCanal) bridgeConfig.discordChannelId = nuevoCanal.id;
-            else if (!bridgeConfig.discordChannelId) bridgeConfig.discordChannelId = interaction
+            else if (!bridgeConfig.discordChannelId) bridgeConfig.discordChannelId = interaction.channelId;
+
+            await safeReply(interaction, `✅ **Configuración Guardada**\n📱 WA: \`${bridgeConfig.whatsappGroupName}\`\n📍 Canal: <#${bridgeConfig.discordChannelId}>`);
+        }
+
+        if (interaction.commandName === 'status') {
+            await safeReply(interaction, `📊 **Estado**\nWA: ${isWaReady ? '✅' : '⏳'}\nGrupo: \`${bridgeConfig.whatsappGroupName}\``);
+        }
+    } catch (e) { console.log("Error interacción:", e.message); }
+});
+
+whatsappClient.initialize().catch(err => console.log("Error init:", err.message));
+discordClient.login(DISCORD_TOKEN);
+
+const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+(async () => {
+    try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
+})();
+
+process.on('uncaughtException', (err) => console.log('Excepción:', err.message));
+process.on('unhandledRejection', (reason) => console.log('Rechazo:', reason));
+
+let updateQR = null;
+whatsappClient.on('qr', (qr) => { isWaReady = false; if (updateQR) updateQR(qr); });
+module.exports.setQRHandler = (handler) => { updateQR = handler; };
