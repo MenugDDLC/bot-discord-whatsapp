@@ -34,7 +34,6 @@ const whatsappClient = new WhatsAppClient({
 // --- FUNCIONES DE SEGURIDAD ---
 async function safeReply(interaction, content) {
     try {
-        // Si ya respondimos o enviamos un "pensando...", editamos. Si no, respondemos.
         if (interaction.deferred || interaction.replied) {
             await interaction.editReply({ content }).catch(() => null);
         } else {
@@ -56,7 +55,7 @@ async function sendToDiscord(msg, chatName, isHistory = false) {
             .setColor(isHistory ? '#7289da' : '#fb92b3') 
             .setAuthor({ name: (isHistory ? "[AVISO PASADO] " : "📢 ") + (contact.pushname || "Anuncios"), iconURL: pfp || 'https://i.imgur.com/83p7ihD.png' })
             .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Contenido Multimedia]" : "Mensaje sin texto"))
-            .setFooter({ text: `Canal de Avisos: ${chatName}` })
+            .setFooter({ text: `Canal: ${chatName}` })
             .setTimestamp(new Date(msg.timestamp * 1000));
 
         let files = [];
@@ -78,23 +77,30 @@ whatsappClient.on('ready', async () => {
     isWaReady = true;
     console.log('✅ WA Listo.');
     const chats = await whatsappClient.getChats().catch(() => []);
+    // Intentamos buscar por nombre
     const target = chats.find(c => c.name.includes(DEFAULT_COMMUNITY_NAME));
     if (target) {
         bridgeConfig.whatsappGroupName = target.name;
         bridgeConfig.whatsappChatId = target.id._serialized;
-        console.log(`📢 Vinculado a Avisos: ${target.name}`);
+        console.log(`🚀 ID DETECTADO: ${target.id._serialized} (Nombre: ${target.name})`);
     }
 });
 
-// Captura avisos de otros y avisos tuyos
+// RASTREADOR DE MENSAJES (Para encontrar el ID si falla la detección automática)
 const handleMsg = async (msg) => {
+    const chat = await msg.getChat().catch(() => null);
     const fromId = msg.fromMe ? msg.to : msg.from;
+
+    // ESTO IMPRIMIRÁ EN KOYEB EL ID DE CUALQUIER MENSAJE QUE LLEGUE
+    console.log(`📩 Mensaje recibido de: ${chat ? chat.name : 'Desconocido'} | ID: ${fromId}`);
+
     if (bridgeConfig.whatsappChatId && fromId === bridgeConfig.whatsappChatId) {
         lastMessages.push(msg);
         if (lastMessages.length > 5) lastMessages.shift();
         await sendToDiscord(msg, bridgeConfig.whatsappGroupName);
     }
 };
+
 whatsappClient.on('message', handleMsg);
 whatsappClient.on('message_create', handleMsg);
 
@@ -105,32 +111,28 @@ discordClient.on('interactionCreate', async interaction => {
     try {
         if (interaction.commandName === 'configurar') {
             bridgeConfig.discordChannelId = interaction.options.getChannel('canal').id;
-            await safeReply(interaction, `✅ Puente listo para el canal de avisos.`);
+            await safeReply(interaction, `✅ Puente configurado.`);
         }
 
         if (interaction.commandName === 'status') {
-            await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nCanal: \`${bridgeConfig.whatsappGroupName}\``);
+            await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nID Actual: \`${bridgeConfig.whatsappChatId || 'No vinculado'}\``);
         }
 
         if (interaction.commandName === 'ultimo') {
-            // Verificamos antes de hacer defer para evitar el error 40060
             if (!interaction.deferred && !interaction.replied) await interaction.deferReply();
-            
             if (lastMessages.length > 0) {
                 for (const m of lastMessages) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
-                await safeReply(interaction, "✅ Avisos en memoria enviados.");
-            } else {
+                await safeReply(interaction, "✅ Historial enviado.");
+            } else if (bridgeConfig.whatsappChatId) {
                 const chat = await whatsappClient.getChatById(bridgeConfig.whatsappChatId).catch(() => null);
-                if (chat) {
-                    const msgs = await chat.fetchMessages({ limit: 2 }).catch(() => []);
-                    for (const m of msgs) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
-                    await safeReply(interaction, "✅ Avisos recuperados de WA.");
-                } else {
-                    await safeReply(interaction, "❌ No hay avisos recientes.");
-                }
+                const msgs = chat ? await chat.fetchMessages({ limit: 2 }).catch(() => []) : [];
+                for (const m of msgs) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
+                await safeReply(interaction, "✅ Avisos recuperados de WhatsApp.");
+            } else {
+                await safeReply(interaction, "❌ No hay avisos. Escribe en el canal para vincularlo.");
             }
         }
-    } catch (err) { console.log("Error en interacción:", err.message); }
+    } catch (err) { console.log("Error:", err.message); }
 });
 
 whatsappClient.initialize().catch(() => {});
