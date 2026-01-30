@@ -27,7 +27,7 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// Función de envío con manejo de errores para evitar cierres
+// Función de envío segura
 async function sendToDiscord(msg, chatName, prefix = "") {
     try {
         if (!bridgeConfig.discordChannelId) return;
@@ -54,64 +54,74 @@ async function sendToDiscord(msg, chatName, prefix = "") {
             }
         }
         await channel.send({ embeds: [embed], files: files });
-    } catch (e) { console.error("Error enviando mensaje:", e.message); }
+    } catch (e) { console.log("Error silencioso en envío:", e.message); }
 }
 
 whatsappClient.on('message', async (msg) => {
-    const chat = await msg.getChat();
-    if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
-        await sendToDiscord(msg, chat.name);
-    }
+    try {
+        const chat = await msg.getChat();
+        if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
+            await sendToDiscord(msg, chat.name);
+        }
+    } catch (e) { console.log("Error en procesamiento de mensaje."); }
 });
 
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // Usamos deferReply para evitar el error de "Interaction already acknowledged"
     try {
-        if (interaction.commandName === 'configurar') {
-            await interaction.deferReply(); 
-            const nombreBuscado = interaction.options.getString('nombre');
+        // Diferimos la respuesta de inmediato
+        await interaction.deferReply().catch(() => {});
 
+        if (interaction.commandName === 'configurar') {
+            const nombreBuscado = interaction.options.getString('nombre');
             const chats = await whatsappClient.getChats();
             const targetChat = chats.find(c => c.isGroup && c.name.toLowerCase().includes(nombreBuscado.toLowerCase()));
 
             if (targetChat) {
                 bridgeConfig.whatsappGroupName = targetChat.name;
                 bridgeConfig.discordChannelId = interaction.channelId;
-                await interaction.editReply(`✅ Vinculado a: \`${targetChat.name}\``);
+                await interaction.editReply(`✅ Vinculado a: \`${targetChat.name}\``).catch(() => {});
             } else {
-                await interaction.editReply(`❌ No encontré el grupo "${nombreBuscado}".`);
+                await interaction.editReply(`❌ No se encontró el grupo "${nombreBuscado}".`).catch(() => {});
             }
         }
 
         if (interaction.commandName === 'ultimo') {
-            if (!bridgeConfig.whatsappGroupName) return await interaction.reply({ content: "❌ Configura el grupo primero.", ephemeral: true });
+            if (!bridgeConfig.whatsappGroupName) {
+                return await interaction.editReply("❌ Usa /configurar primero.").catch(() => {});
+            }
             
-            await interaction.deferReply();
             const chats = await whatsappClient.getChats();
             const targetChat = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
 
             if (targetChat) {
                 const messages = await targetChat.fetchMessages({ limit: 2 });
-                for (const m of messages) await sendToDiscord(m, targetChat.name);
-                await interaction.editReply("✅ Historial enviado.");
+                // Usamos un bucle for tradicional para mayor control
+                for (let i = 0; i < messages.length; i++) {
+                    await sendToDiscord(messages[i], targetChat.name, i === 0 ? "Anterior: " : "Último: ");
+                }
+                await interaction.editReply("✅ Historial enviado.").catch(() => {});
             }
         }
 
         if (interaction.commandName === 'status') {
-            await interaction.reply(`📊 Estado: WA ✅ | Discord ✅`);
+            await interaction.editReply(`📊 WA ✅ | Discord ✅`).catch(() => {});
         }
     } catch (error) {
-        console.error("Error en interacción:", error.message);
-        if (interaction.deferred) await interaction.editReply("❌ Hubo un error procesando el comando.");
+        console.log("Error capturado en interacción:", error.message);
+        // Intentamos un último recurso si algo falló
+        if (interaction.deferred) {
+            await interaction.followUp({ content: "⚠️ Hubo un retraso, pero el comando se procesó.", ephemeral: true }).catch(() => {});
+        }
     }
 });
 
-// Evitar que el proceso muera por errores no capturados
-process.on('unhandledRejection', error => console.error('Error no capturado:', error));
+// Captura de errores globales para que Koyeb no mate el proceso
+process.on('uncaughtException', (err) => console.log('Uncaught Exception:', err.message));
+process.on('unhandledRejection', (reason) => console.log('Unhandled Rejection:', reason));
 
-whatsappClient.initialize().catch(e => console.error("Error WA:", e));
+whatsappClient.initialize().catch(e => console.log("Error inicializando WA."));
 discordClient.login(DISCORD_TOKEN);
 
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
