@@ -1,6 +1,6 @@
 FROM node:18-bullseye
 
-# Instalar Chromium y dependencias de sistema
+# Instalar dependencias esenciales para Puppeteer/Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -9,23 +9,24 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Variables de entorno para Puppeteer en Railway
+# Variables de entorno críticas
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PORT=8080
 
 WORKDIR /app
 
-# Copiar archivos de dependencias
+# Instalar dependencias
 COPY package*.json ./
 RUN npm install --omit=dev
 
 # Copiar el resto del código
 COPY . .
 
-# Crear carpetas de sesión y dar permisos totales para el volumen de Railway
+# Permisos para persistencia de sesión
 RUN mkdir -p .wwebjs_auth .wwebjs_cache && chmod -R 777 .wwebjs_auth .wwebjs_cache
 
-EXPOSE 3000
+# Koyeb usa a menudo el puerto 8080 por defecto
+EXPOSE 8080
 
-# Comando de inicio
 CMD ["node", "index.js"]
