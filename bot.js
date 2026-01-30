@@ -1,42 +1,38 @@
 require('dotenv').config();
-const { Client: DiscordClient, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client: DiscordClient, GatewayIntentBits } = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal'); // Librería para ver el QR en consola
-const fs = require('fs');
+const qrcode = require('qrcode-terminal');
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+let updateQR = null;
 
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
         executablePath: '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
 });
 
-// --- GENERACIÓN DE QR ---
 whatsappClient.on('qr', (qr) => {
-    console.log('📱 ESCANEA EL SIGUIENTE CÓDIGO QR CON TU WHATSAPP:');
-    // Genera el QR pequeño para que quepa bien en los logs de Koyeb
+    // 1. Mostrar en consola (por si acaso)
     qrcode.generate(qr, { small: true });
+    // 2. Enviar a la web
+    if (updateQR) updateQR(qr);
+    console.log('📱 QR generado. Míralo en tu URL de Koyeb.');
 });
 
-whatsappClient.on('ready', () => console.log('✅ WhatsApp Conectado y Listo!'));
+whatsappClient.on('ready', () => {
+    console.log('✅ WhatsApp Conectado!');
+    if (updateQR) updateQR(null); // Limpia el QR de la web al conectar
+});
 
 const discordClient = new DiscordClient({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-whatsappClient.initialize();
-discordClient.login(DISCORD_TOKEN);
+// Función para conectar con index.js
+module.exports.setQRHandler = (handler) => { updateQR = handler; };
 
-// Reenvío de mensajes (Mantenemos la lógica anterior)
-whatsappClient.on('message', async (message) => {
-    try {
-        const chat = await message.getChat();
-        if (!chat.isGroup) return;
-        // Aquí puedes añadir tu lógica de filtrado por nombre de grupo
-        console.log(`Mensaje recibido de: ${chat.name}`);
-    } catch (e) { console.error('Error:', e); }
-});
+whatsappClient.initialize();
+discordClient.login(process.env.DISCORD_TOKEN);
