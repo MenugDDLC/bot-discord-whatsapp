@@ -8,15 +8,19 @@ const CLIENT_ID = process.env.CLIENT_ID;
 let bridgeConfig = { whatsappGroupName: null, discordChannelId: null };
 let isWaReady = false;
 
-// --- COMANDOS ---
+// --- COMANDOS CORREGIDOS ---
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Ver estado del puente'),
-    new SlashBuilder = new SlashCommandBuilder()
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('Ver estado del puente'),
+    new SlashCommandBuilder()
         .setName('configurar')
         .setDescription('Vincula el grupo/comunidad y el canal de reenvío')
-        .addStringOption(option => option.setName('nombre').setDescription('Nombre del chat en WhatsApp (Comunidad o Grupo)').setRequired(true))
-        .addChannelOption(option => option.setName('canal').setDescription('Canal de Discord donde llegarán los mensajes').addChannelTypes(ChannelType.GuildText).setRequired(false)),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores')
+        .addStringOption(option => option.setName('nombre').setDescription('Nombre del chat en WhatsApp').setRequired(true))
+        .addChannelOption(option => option.setName('canal').setDescription('Canal de Discord').addChannelTypes(ChannelType.GuildText).setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('ultimo')
+        .setDescription('Muestra los 2 mensajes anteriores')
 ].map(command => command.toJSON());
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
@@ -30,7 +34,6 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- FUNCIONES DE SEGURIDAD ---
 async function safeReply(interaction, content, isEphemeral = false) {
     try {
         const options = { content: content };
@@ -72,8 +75,7 @@ async function sendToDiscord(msg, chatName, prefix = "") {
     } catch (e) { console.log("Error reenviando:", e.message); }
 }
 
-// --- EVENTOS ---
-whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WhatsApp Conectado y Listo.'); });
+whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WhatsApp Conectado.'); });
 
 whatsappClient.on('message', async (msg) => {
     if (!isWaReady) return;
@@ -85,6 +87,55 @@ whatsappClient.on('message', async (msg) => {
 
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
+    if (!isWaReady) return await safeReply(interaction, "⏳ WhatsApp no está listo.", true);
 
-    if (!isWaReady) {
-        return await safeReply(interaction, "⏳ WhatsApp aún se está conectando. Re
+    try {
+        if (interaction.commandName === 'configurar') {
+            await interaction.deferReply();
+            const nombreBusqueda = interaction.options.getString('nombre');
+            const canalDestino = interaction.options.getChannel('canal') || interaction.channel;
+
+            const chats = await whatsappClient.getChats().catch(() => []);
+            const target = chats.find(c => c.name.toLowerCase().includes(nombreBusqueda.toLowerCase()));
+
+            if (target) {
+                bridgeConfig.whatsappGroupName = target.name;
+                bridgeConfig.discordChannelId = canalDestino.id;
+                await safeReply(interaction, `✅ **Puente Configurado**\n📱 Chat: \`${target.name}\` \n📍 Canal: <#${canalDestino.id}>`);
+            } else {
+                await safeReply(interaction, `❌ No encontré "${nombreBusqueda}".`);
+            }
+        }
+
+        if (interaction.commandName === 'ultimo') {
+            if (!bridgeConfig.whatsappGroupName) return await safeReply(interaction, "❌ Configura primero el grupo.", true);
+            await interaction.deferReply();
+            const chats = await whatsappClient.getChats().catch(() => []);
+            const target = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
+            if (target) {
+                const messages = await target.fetchMessages({ limit: 2 });
+                for (const m of messages) await sendToDiscord(m, target.name);
+                await safeReply(interaction, "✅ Historial enviado.");
+            }
+        }
+
+        if (interaction.commandName === 'status') {
+            await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'} | Vinculado: \`${bridgeConfig.whatsappGroupName || 'Ninguno'}\``);
+        }
+    } catch (e) { console.log("Error interacción:", e.message); }
+});
+
+whatsappClient.initialize().catch(() => {});
+discordClient.login(DISCORD_TOKEN);
+
+const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+(async () => {
+    try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
+})();
+
+process.on('uncaughtException', (err) => console.log('Error:', err.message));
+process.on('unhandledRejection', (reason) => console.log('Rejection:', reason));
+
+let updateQR = null;
+whatsappClient.on('qr', (qr) => { isWaReady = false; if (updateQR) updateQR(qr); });
+module.exports.setQRHandler = (handler) => { updateQR = handler; };
