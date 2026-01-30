@@ -7,25 +7,25 @@ const CLIENT_ID = process.env.CLIENT_ID;
 
 // Configuración en memoria
 let bridgeConfig = {
-    whatsappGroupId: null,
+    whatsappGroupName: null, // Ahora guardamos el NOMBRE
     discordChannelId: null
 };
 
-// 1. Definición de todos los comandos Slash
+// 1. Definición de comandos Slash
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Revisa el estado de la conexión'),
-    new SlashCommandBuilder().setName('id_grupo').setDescription('Muestra el ID del último grupo de WA que envió mensaje'),
     new SlashCommandBuilder()
         .setName('configurar')
-        .setDescription('Vincula el grupo de WA y el canal de Discord')
-        .addStringOption(option => option.setName('whatsapp_id').setDescription('ID técnico del grupo de WhatsApp').setRequired(true)),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra el último mensaje con foto de perfil'),
+        .setDescription('Vincula el grupo de WA por su nombre y este canal de Discord')
+        .addStringOption(option => 
+            option.setName('nombre_grupo')
+            .setDescription('Nombre exacto del grupo de WhatsApp (ej: El Club De Monika)')
+            .setRequired(true)),
+    new SlashCommandBuilder().setName('ultimo').setDescription('Muestra el último mensaje detectado'),
 ].map(command => command.toJSON());
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
-// Variable para rastrear el último grupo detectado
-let lastDetectedGroupId = "Aún no se detectan mensajes";
 let lastWAMessage = { body: "Esperando mensajes...", author: "Sistema", group: "Ninguno", pfp: null };
 
 const whatsappClient = new WhatsAppClient({
@@ -37,38 +37,39 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// Lógica de WhatsApp
+// Lógica de WhatsApp con filtro por NOMBRE
 whatsappClient.on('message', async (msg) => {
     const chat = await msg.getChat();
-    if (chat.isGroup) {
-        // Guardamos el ID del grupo para el comando /id_grupo
-        lastDetectedGroupId = chat.id._serialized;
+    
+    // Si hay un nombre configurado, ignoramos mensajes de otros grupos
+    if (bridgeConfig.whatsappGroupName) {
+        if (!chat.isGroup || chat.name !== bridgeConfig.whatsappGroupName) return;
+    } else {
+        // Si no hay configuración, no reenviamos nada automáticamente
+        return;
+    }
 
-        // Si ya hay configuración, filtramos
-        if (bridgeConfig.whatsappGroupId && chat.id._serialized !== bridgeConfig.whatsappGroupId) return;
+    const contact = await msg.getContact();
+    let profilePic = await contact.getProfilePicUrl().catch(() => null);
 
-        const contact = await msg.getContact();
-        let profilePic = await contact.getProfilePicUrl().catch(() => null);
+    lastWAMessage = {
+        body: msg.body || (msg.hasMedia ? "📷 [Multimedia]" : "Texto vacío"),
+        author: contact.pushname || contact.number,
+        group: chat.name,
+        pfp: profilePic
+    };
 
-        lastWAMessage = {
-            body: msg.body || (msg.hasMedia ? "📷 [Multimedia]" : "Texto vacío"),
-            author: contact.pushname || contact.number,
-            group: chat.name,
-            pfp: profilePic
-        };
-
-        // Reenvío automático al canal configurado
-        if (bridgeConfig.discordChannelId) {
-            const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
-            if (channel) {
-                const embed = new EmbedBuilder()
-                    .setColor('#00ffcc')
-                    .setAuthor({ name: lastWAMessage.author, iconURL: lastWAMessage.pfp || 'https://i.imgur.com/83p7ihD.png' })
-                    .setDescription(lastWAMessage.body)
-                    .setFooter({ text: `Grupo: ${lastWAMessage.group}` })
-                    .setTimestamp();
-                channel.send({ embeds: [embed] });
-            }
+    // Reenvío automático al canal de Discord
+    if (bridgeConfig.discordChannelId) {
+        const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
+        if (channel) {
+            const embed = new EmbedBuilder()
+                .setColor('#00ffcc')
+                .setAuthor({ name: lastWAMessage.author, iconURL: lastWAMessage.pfp || 'https://i.imgur.com/83p7ihD.png' })
+                .setDescription(lastWAMessage.body)
+                .setFooter({ text: `WhatsApp: ${lastWAMessage.group}` })
+                .setTimestamp();
+            channel.send({ embeds: [embed] });
         }
     }
 });
@@ -77,39 +78,31 @@ whatsappClient.on('message', async (msg) => {
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // COMANDO: /id_grupo
-    if (interaction.commandName === 'id_grupo') {
+    if (interaction.commandName === 'configurar') {
+        const nombreWA = interaction.options.getString('nombre_grupo');
+        
+        // Guardamos el nombre y el canal actual
+        bridgeConfig.whatsappGroupName = nombreWA;
+        bridgeConfig.discordChannelId = interaction.channelId;
+
         await interaction.reply({
-            content: `🆔 **Último ID detectado:** \`${lastDetectedGroupId}\`\n\n*Escribe en el grupo de WhatsApp que quieres vincular y luego usa este comando de nuevo.*`,
-            ephemeral: true
+            content: `✅ **Configuración por nombre completada**\n📍 **Canal de Discord:** <#${interaction.channelId}>\n📱 **Grupo de WhatsApp:** \`${nombreWA}\`\n\n*Nota: El nombre debe ser idéntico (mayúsculas, minúsculas y emojis).*`,
         });
     }
 
-    // COMANDO: /configurar
-    if (interaction.commandName === 'configurar') {
-        const waId = interaction.options.getString('whatsapp_id');
-        bridgeConfig.whatsappGroupId = waId;
-        bridgeConfig.discordChannelId = interaction.channelId;
-
-        await interaction.reply(`✅ **Puente establecido**\n📍 Discord: <#${interaction.channelId}>\n📱 WA ID: \`${waId}\``);
+    if (interaction.commandName === 'status') {
+        const filtro = bridgeConfig.whatsappGroupName ? `Filtrando por: ${bridgeConfig.whatsappGroupName}` : 'Esperando configuración';
+        await interaction.reply(`📊 **WA:** ✅ | **Discord:** ✅\n🔍 **Estado:** ${filtro}`);
     }
 
-    // COMANDO: /ultimo
     if (interaction.commandName === 'ultimo') {
         const embed = new EmbedBuilder()
             .setColor('#e94560')
-            .setTitle('✨ Previsualización')
             .setAuthor({ name: lastWAMessage.author, iconURL: lastWAMessage.pfp || 'https://i.imgur.com/83p7ihD.png' })
-            .setThumbnail(lastWAMessage.pfp)
-            .setDescription(`💬 **Dijo:**\n> ${lastWAMessage.body}`)
-            .setFooter({ text: `Origen: ${lastWAMessage.group}` });
-
+            .setTitle('✨ Último mensaje capturado')
+            .setDescription(`> ${lastWAMessage.body}`)
+            .setFooter({ text: `Grupo: ${lastWAMessage.group}` });
         await interaction.reply({ embeds: [embed] });
-    }
-
-    // COMANDO: /status
-    if (interaction.commandName === 'status') {
-        await interaction.reply(`📊 **Estado:** Conexión OK ✅ | Filtro: ${bridgeConfig.whatsappGroupId ? 'Activo' : 'Inactivo'}`);
     }
 });
 
@@ -120,9 +113,11 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => {
     try {
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('✅ Comandos Slash configurados para búsqueda por nombre');
     } catch (e) { console.error(e); }
 })();
 
+// Manejo de QR para index.js
 let updateQR = null;
 whatsappClient.on('qr', (qr) => { if (updateQR) updateQR(qr); });
 module.exports.setQRHandler = (handler) => { updateQR = handler; };
