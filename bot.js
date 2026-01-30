@@ -6,6 +6,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 let bridgeConfig = { whatsappGroupName: null, discordChannelId: null };
+let isWaReady = false; // Flag de control
 
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
@@ -27,7 +28,17 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// Función de envío segura
+// Eventos de estado de WhatsApp
+whatsappClient.on('ready', () => {
+    isWaReady = true;
+    console.log('✅ WhatsApp está listo y conectado.');
+});
+
+whatsappClient.on('disconnected', () => {
+    isWaReady = false;
+    console.log('❌ WhatsApp se ha desconectado.');
+});
+
 async function sendToDiscord(msg, chatName, prefix = "") {
     try {
         if (!bridgeConfig.discordChannelId) return;
@@ -54,23 +65,31 @@ async function sendToDiscord(msg, chatName, prefix = "") {
             }
         }
         await channel.send({ embeds: [embed], files: files });
-    } catch (e) { console.log("Error silencioso en envío:", e.message); }
+    } catch (e) { console.log("Error en envío:", e.message); }
 }
 
 whatsappClient.on('message', async (msg) => {
+    if (!isWaReady) return;
     try {
         const chat = await msg.getChat();
         if (bridgeConfig.whatsappGroupName && chat.name === bridgeConfig.whatsappGroupName) {
             await sendToDiscord(msg, chat.name);
         }
-    } catch (e) { console.log("Error en procesamiento de mensaje."); }
+    } catch (e) {}
 });
 
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // Validación de seguridad: ¿WhatsApp está listo?
+    if (!isWaReady) {
+        return await interaction.reply({ 
+            content: "⏳ WhatsApp aún se está conectando o el código QR no ha sido escaneado. Por favor, espera un momento.", 
+            ephemeral: true 
+        }).catch(() => {});
+    }
+
     try {
-        // Diferimos la respuesta de inmediato
         await interaction.deferReply().catch(() => {});
 
         if (interaction.commandName === 'configurar') {
@@ -83,7 +102,7 @@ discordClient.on('interactionCreate', async interaction => {
                 bridgeConfig.discordChannelId = interaction.channelId;
                 await interaction.editReply(`✅ Vinculado a: \`${targetChat.name}\``).catch(() => {});
             } else {
-                await interaction.editReply(`❌ No se encontró el grupo "${nombreBuscado}".`).catch(() => {});
+                await interaction.editReply(`❌ No encontré el grupo "${nombreBuscado}".`).catch(() => {});
             }
         }
 
@@ -97,7 +116,6 @@ discordClient.on('interactionCreate', async interaction => {
 
             if (targetChat) {
                 const messages = await targetChat.fetchMessages({ limit: 2 });
-                // Usamos un bucle for tradicional para mayor control
                 for (let i = 0; i < messages.length; i++) {
                     await sendToDiscord(messages[i], targetChat.name, i === 0 ? "Anterior: " : "Último: ");
                 }
@@ -106,22 +124,17 @@ discordClient.on('interactionCreate', async interaction => {
         }
 
         if (interaction.commandName === 'status') {
-            await interaction.editReply(`📊 WA ✅ | Discord ✅`).catch(() => {});
+            await interaction.editReply(`📊 WhatsApp: ${isWaReady ? '✅ Conectado' : '⏳ Iniciando'} | Discord: ✅`).catch(() => {});
         }
     } catch (error) {
-        console.log("Error capturado en interacción:", error.message);
-        // Intentamos un último recurso si algo falló
-        if (interaction.deferred) {
-            await interaction.followUp({ content: "⚠️ Hubo un retraso, pero el comando se procesó.", ephemeral: true }).catch(() => {});
-        }
+        console.log("Error en interacción:", error.message);
     }
 });
 
-// Captura de errores globales para que Koyeb no mate el proceso
-process.on('uncaughtException', (err) => console.log('Uncaught Exception:', err.message));
-process.on('unhandledRejection', (reason) => console.log('Unhandled Rejection:', reason));
+process.on('uncaughtException', (err) => console.log('Exception:', err.message));
+process.on('unhandledRejection', (reason) => console.log('Rejection:', reason));
 
-whatsappClient.initialize().catch(e => console.log("Error inicializando WA."));
+whatsappClient.initialize().catch(e => console.log("WA Init Error"));
 discordClient.login(DISCORD_TOKEN);
 
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
@@ -130,5 +143,8 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 })();
 
 let updateQR = null;
-whatsappClient.on('qr', (qr) => { if (updateQR) updateQR(qr); });
+whatsappClient.on('qr', (qr) => { 
+    isWaReady = false; // Si pide QR, no está listo
+    if (updateQR) updateQR(qr); 
+});
 module.exports.setQRHandler = (handler) => { updateQR = handler; };
