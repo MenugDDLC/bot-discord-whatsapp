@@ -5,7 +5,6 @@ const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-// Configuración predeterminada
 const DEFAULT_COMMUNITY_NAME = "✨📖𝑬𝒍 𝑪𝒍𝒖𝒃 𝑫𝒆 𝑴𝒐𝒏𝒊𝒌𝒂 ✒✨";
 
 let bridgeConfig = { 
@@ -14,7 +13,6 @@ let bridgeConfig = {
 };
 let isWaReady = false;
 
-// --- COMANDOS ---
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado del puente'),
     new SlashCommandBuilder()
@@ -27,7 +25,6 @@ const commands = [
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
-// --- CLIENTE WHATSAPP ---
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
     qrMaxRetries: 10,
@@ -35,16 +32,7 @@ const whatsappClient = new WhatsAppClient({
         headless: true,
         executablePath: '/usr/bin/chromium',
         protocolTimeout: 0, 
-        args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox', 
-            '--disable-dev-shm-usage', 
-            '--disable-gpu',
-            '--no-zygote',
-            '--single-process',
-            '--disable-extensions',
-            '--no-first-run'
-        ]
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process']
     },
     webVersionCache: {
         type: 'remote',
@@ -52,7 +40,6 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- RESPUESTA SEGURA ---
 async function safeReply(interaction, content, isEphemeral = false) {
     try {
         const options = { content: content };
@@ -71,7 +58,7 @@ async function sendToDiscord(msg, chatName) {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) return;
 
-        const contact = await msg.getContact();
+        const contact = await msg.getContact().catch(() => ({ pushname: 'Usuario', number: 'Desconocido' }));
         const pfp = await contact.getProfilePicUrl().catch(() => null);
         
         const embed = new EmbedBuilder()
@@ -81,7 +68,7 @@ async function sendToDiscord(msg, chatName) {
             .setFooter({ text: `WA: ${chatName}` })
             .setTimestamp(new Date(msg.timestamp * 1000));
 
-        const files = [];
+        let files = [];
         if (msg.hasMedia) {
             const media = await msg.downloadMedia().catch(() => null);
             if (media && media.data) {
@@ -93,7 +80,6 @@ async function sendToDiscord(msg, chatName) {
     } catch (e) { console.log("Error reenvío:", e.message); }
 }
 
-// --- EVENTOS ---
 whatsappClient.on('ready', async () => {
     isWaReady = true;
     console.log('✅ WhatsApp Conectado.');
@@ -128,11 +114,36 @@ discordClient.on('interactionCreate', async interaction => {
                 const target = chats.find(c => c.name.toLowerCase().includes(nuevoNombre.toLowerCase()));
                 if (target) bridgeConfig.whatsappGroupName = target.name;
             }
-
             if (nuevoCanal) bridgeConfig.discordChannelId = nuevoCanal.id;
             else if (!bridgeConfig.discordChannelId) bridgeConfig.discordChannelId = interaction.channelId;
 
             await safeReply(interaction, `✅ **Configuración Guardada**\n📱 WA: \`${bridgeConfig.whatsappGroupName}\`\n📍 Canal: <#${bridgeConfig.discordChannelId}>`);
+        }
+
+        if (interaction.commandName === 'ultimo') {
+            await interaction.deferReply();
+            
+            // Promesa con tiempo de espera (10 segundos)
+            const fetchPromise = (async () => {
+                const chats = await whatsappClient.getChats().catch(() => []);
+                const target = chats.find(c => c.name === bridgeConfig.whatsappGroupName);
+                if (target) {
+                    const messages = await target.fetchMessages({ limit: 2 });
+                    for (const m of messages) await sendToDiscord(m, target.name);
+                    return true;
+                }
+                return false;
+            })();
+
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+
+            try {
+                const result = await Promise.race([fetchPromise, timeoutPromise]);
+                if (result) await safeReply(interaction, "✅ Mensajes recuperados.");
+                else await safeReply(interaction, "❌ No se encontró el chat configurado.");
+            } catch (err) {
+                await safeReply(interaction, "⚠️ WhatsApp tardó demasiado en responder. Inténtalo de nuevo.");
+            }
         }
 
         if (interaction.commandName === 'status') {
