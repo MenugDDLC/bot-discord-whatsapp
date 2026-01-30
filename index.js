@@ -1,16 +1,17 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000;
+// Koyeb inyecta la variable PORT automáticamente
+const port = process.env.PORT || 8080; 
 
 app.get('/', (req, res) => {
-    res.send('<h1>🤖 Bot Bridge Activo en Railway</h1><p>Conexión WhatsApp-Discord funcionando.</p>');
+    res.send('<h1>🤖 Bot Bridge Monika - Koyeb</h1><p>Estado: Activo</p>');
 });
 
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', uptime: process.uptime() });
+    res.status(200).json({ status: 'ok', platform: 'koyeb' });
 });
 
-app.listen(port, () => {
-    console.log(`📡 Servidor escuchando en puerto ${port}`);
+app.listen(port, "0.0.0.0", () => {
+    console.log(`📡 Servidor en línea en puerto ${port}`);
     require('./bot.js');
 });
