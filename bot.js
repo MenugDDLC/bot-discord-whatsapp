@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client: DiscordClient, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client: DiscordClient, GatewayIntentBits, REST, Routes } = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -18,52 +18,56 @@ const whatsappClient = new WhatsAppClient({
 
 let updateQR = null;
 
-// --- MODO ESPÍA: IMPRIMIR TODO ---
+// --- MODO ESPÍA: ENCONTRAR EL ID ---
 whatsappClient.on('ready', async () => {
-    console.log('✅ WhatsApp Conectado (Modo Diagnóstico)');
-    console.log('🔍 Buscando chats disponibles...');
+    console.log('✅ WA Conectado en Modo Espía');
+    console.log('🔍 Escaneando lista de chats...');
 
     try {
         const chats = await whatsappClient.getChats();
         
-        console.log('------------------------------------------------');
-        console.log(`📂 Se encontraron ${chats.length} chats.`);
-        
-        // Imprimir cada chat para que busques el tuyo
-        chats.forEach((chat, index) => {
-            if (chat.isGroup || chat.isReadOnly) { // Filtramos solo grupos o canales
-                console.log(`${index + 1}. Nombre: "${chat.name}" | ID: ${chat.id._serialized}`);
+        console.log('\n--- LISTA DE GRUPOS DETECTADOS ---');
+        let count = 0;
+        chats.forEach(chat => {
+            // Filtramos para mostrar solo grupos o canales de avisos
+            if (chat.isGroup || chat.isReadOnly) {
+                console.log(`📌 Nombre: "${chat.name}"`);
+                console.log(`🆔 ID: ${chat.id._serialized}`);
+                console.log('-----------------------------------');
+                count++;
             }
         });
-        console.log('------------------------------------------------');
-        console.log('👉 Busca en esta lista el nombre exacto de tu canal de avisos.');
+        console.log(`📂 Total encontrados: ${count}`);
+        console.log('👉 Busca arriba el ID que corresponde a "El Club De Monika" o "Avisos".\n');
         
     } catch (e) {
         console.log('Error obteniendo chats:', e.message);
     }
 });
 
-// También escuchamos CUALQUIER mensaje que entre para ver su origen
-whatsappClient.on('message', async (msg) => {
-    const chat = await msg.getChat();
-    console.log(`📩 MENSAJE RECIBIDO DE: "${chat.name}" | ID: ${chat.id._serialized} | TIPO: ${msg.type}`);
-});
-
-// Escuchamos mensajes que TÚ envías
-whatsappClient.on('message_create', async (msg) => {
-    if (msg.fromMe) {
+// ESCUCHAR MENSAJES EN TIEMPO REAL PARA CAZAR EL ID
+const logMessage = async (msg) => {
+    try {
         const chat = await msg.getChat();
-        console.log(`📤 TU ENVIASTE EN: "${chat.name}" | ID: ${chat.id._serialized} | CONTENIDO: ${msg.body}`);
-    }
+        const fromId = msg.fromMe ? msg.to : msg.from;
+        
+        console.log(`\n📩 NUEVO MENSAJE DETECTADO`);
+        console.log(`De: "${chat.name}"`);
+        console.log(`🆔 ID DEL CHAT: ${fromId}`);
+        console.log(`Contenido: ${msg.body || '[Multimedia]'}`);
+        console.log('-----------------------------------\n');
+    } catch (e) { console.log("Error log:", e); }
+};
+
+whatsappClient.on('message', logMessage);
+whatsappClient.on('message_create', logMessage); // Escucha también tus propios mensajes
+
+whatsappClient.on('qr', qr => { 
+    if (updateQR) updateQR(qr); 
 });
 
-whatsappClient.on('qr', qr => { if (updateQR) updateQR(qr); });
-whatsappClient.initialize().catch(err => console.log("Error init:", err));
+whatsappClient.initialize().catch(err => console.log("Error init:", err.message));
 discordClient.login(DISCORD_TOKEN);
 
-module.exports.setQRHandler = h => { updateQR = h; };
-
-// Servidor web básico para mantener Koyeb vivo y mostrar QR
-const http = require('http');
-const server = http.createServer((req, res) => res.end('Bot Diagnostico Activo'));
-server.listen(8080);
+// Exportamos solo el manejador de QR, sin crear servidor web extra
+module.exports.setQRHandler = (handler) => { updateQR = handler; };
