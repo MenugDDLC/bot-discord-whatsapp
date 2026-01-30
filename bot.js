@@ -39,7 +39,6 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- SEGURIDAD EN RESPUESTAS ---
 async function safeReply(interaction, content) {
     try {
         if (interaction.deferred || interaction.replied) {
@@ -56,7 +55,7 @@ async function sendToDiscord(msg, chatName, isHistory = false) {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) return;
 
-        const contact = await msg.getContact().catch(() => ({ pushname: 'Admin de Comunidad' }));
+        const contact = await msg.getContact().catch(() => ({ pushname: 'Admin' }));
         const pfp = await contact.getProfilePicUrl().catch(() => null);
         
         const embed = new EmbedBuilder()
@@ -81,29 +80,31 @@ async function sendToDiscord(msg, chatName, isHistory = false) {
     } catch (e) { console.log("Error reenvío:", e.message); }
 }
 
-// --- EVENTOS WA ---
+// --- EVENTOS WHATSAPP ---
 whatsappClient.on('qr', (qr) => { isWaReady = false; if (updateQR) updateQR(qr); });
 
 whatsappClient.on('ready', async () => {
     isWaReady = true;
-    console.log('✅ WA Listo.');
+    console.log('✅ WhatsApp Conectado.');
     const chats = await whatsappClient.getChats().catch(() => []);
     
-    // Filtro especializado para Canal de Avisos de Comunidad
+    // Filtro para encontrar específicamente el canal de avisos de la comunidad
     const target = chats.find(c => 
-        c.name.includes("Monika") && (c.isReadOnly || c.id._serialized.includes('@g.us'))
+        c.name.includes("Monika") && (c.isReadOnly || c.isGroup)
     );
 
     if (target) {
         bridgeConfig.whatsappGroupName = target.name;
         bridgeConfig.whatsappChatId = target.id._serialized;
-        console.log(`📢 Vinculado al canal de avisos: ${target.name} | ID: ${target.id._serialized}`);
+        console.log(`📢 Canal de Avisos vinculado: ${target.name} | ID: ${target.id._serialized}`);
     }
 });
 
+// FILTRO EXCLUSIVO: Solo procesa si el ID coincide con el canal de Avisos
 const handleMsg = async (msg) => {
+    // Determinamos el ID de origen (si lo envías tú o alguien más)
     const fromId = msg.fromMe ? msg.to : msg.from;
-    // Captura mensajes si el ID coincide con el canal de avisos
+
     if (bridgeConfig.whatsappChatId && fromId === bridgeConfig.whatsappChatId) {
         lastMessages.push(msg);
         if (lastMessages.length > 5) lastMessages.shift();
@@ -121,11 +122,11 @@ discordClient.on('interactionCreate', async interaction => {
     try {
         if (interaction.commandName === 'configurar') {
             bridgeConfig.discordChannelId = interaction.options.getChannel('canal').id;
-            await safeReply(interaction, `✅ Puente listo para el canal de avisos.`);
+            await safeReply(interaction, `✅ Configurado para recibir anuncios exclusivos de Avisos.`);
         }
 
         if (interaction.commandName === 'status') {
-            await safeReply(interaction, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nVinculado a: \`${bridgeConfig.whatsappGroupName}\``);
+            await safeReply(interaction, `📊 **Estado**\nWA: ${isWaReady ? '✅' : '⏳'}\nFiltrando canal: \`${bridgeConfig.whatsappGroupName}\``);
         }
 
         if (interaction.commandName === 'ultimo') {
@@ -133,16 +134,12 @@ discordClient.on('interactionCreate', async interaction => {
             
             if (lastMessages.length > 0) {
                 for (const m of lastMessages) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
-                await safeReply(interaction, "✅ Avisos en memoria enviados.");
+                await safeReply(interaction, "✅ Últimos avisos enviados.");
             } else if (bridgeConfig.whatsappChatId) {
                 const chat = await whatsappClient.getChatById(bridgeConfig.whatsappChatId).catch(() => null);
-                if (chat) {
-                    const msgs = await chat.fetchMessages({ limit: 2 }).catch(() => []);
-                    for (const m of msgs) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
-                    await safeReply(interaction, "✅ Avisos recuperados de WhatsApp.");
-                } else {
-                    await safeReply(interaction, "❌ No hay avisos recientes en el historial.");
-                }
+                const msgs = chat ? await chat.fetchMessages({ limit: 2 }).catch(() => []) : [];
+                for (const m of msgs) await sendToDiscord(m, bridgeConfig.whatsappGroupName, true);
+                await safeReply(interaction, "✅ Avisos recuperados de WhatsApp.");
             }
         }
     } catch (err) { console.log("Error interacción:", err.message); }
