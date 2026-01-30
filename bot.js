@@ -4,15 +4,10 @@ const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-
-// Nombre exacto detectado en tus capturas
 const TARGET_NAME = "✨📖𝑬𝒍 𝑪𝒍𝒖𝒃 𝑫𝒆 𝑴𝒐𝒏𝒊𝒌𝒂 ✒✨";
 
-let bridgeConfig = { 
-    whatsappChatId: null, 
-    discordChannelId: null,
-    groupName: TARGET_NAME
-};
+let lastMessages = [];
+let bridgeConfig = { whatsappChatId: null, discordChannelId: null, groupName: TARGET_NAME };
 let isWaReady = false;
 let updateQR = null;
 
@@ -27,34 +22,48 @@ const commands = [
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
+// --- CONFIGURACIÓN REFORZADA CONTRA TIMEOUTS ---
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
+    authTimeoutMs: 60000, // Aumentamos a 60 segundos el tiempo de espera de autenticación
     puppeteer: {
         headless: true,
         executablePath: '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process']
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage', 
+            '--disable-gpu', 
+            '--no-zygote', 
+            '--single-process'
+        ]
+    },
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     }
 });
 
-// --- SEGURIDAD DE RESPUESTA ---
 async function safeReply(interaction, content) {
     try {
-        if (interaction.deferred || interaction.replied) return await interaction.editReply({ content });
-        await interaction.reply({ content });
+        if (interaction.deferred || interaction.replied) return await interaction.editReply({ content }).catch(() => null);
+        await interaction.reply({ content }).catch(() => null);
     } catch (e) { console.log("Error Discord:", e.message); }
 }
 
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
     try {
-        const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId);
-        const contact = await msg.getContact();
+        const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
+        if (!channel) return;
+        
+        const contact = await msg.getContact().catch(() => ({ pushname: 'Admin' }));
         const pfp = await contact.getProfilePicUrl().catch(() => null);
         
         const embed = new EmbedBuilder()
             .setColor(isHistory ? '#5865F2' : '#fb92b3')
             .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "📢 ") + (contact.pushname || "Admin"), iconURL: pfp || 'https://i.imgur.com/83p7ihD.png' })
-            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Contenido Multimedia]" : "Aviso sin texto"))
+            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Multimedia]" : "Aviso sin texto"))
             .setTimestamp(new Date(msg.timestamp * 1000));
 
         let files = [];
@@ -65,32 +74,45 @@ async function sendToDiscord(msg, isHistory = false) {
                 embed.setImage('attachment://archivo.png');
             }
         }
-        await channel.send({ embeds: [embed], files });
+        await channel.send({ embeds: [embed], files }).catch(() => null);
     } catch (e) { console.log("Error Reenvío:", e.message); }
 }
 
 // --- EVENTOS WA ---
-whatsappClient.on('qr', qr => { isWaReady = false; if (updateQR) updateQR(qr); });
+whatsappClient.on('qr', qr => { 
+    isWaReady = false; 
+    if (updateQR) updateQR(qr); 
+    console.log("Nuevo QR generado. Escanéalo pronto.");
+});
 
 whatsappClient.on('ready', async () => {
     isWaReady = true;
     console.log('✅ WhatsApp Conectado');
-    const chats = await whatsappClient.getChats();
-    // Buscamos el canal de avisos (Suelen ser Read Only para usuarios normales)
-    const target = chats.find(c => c.name.includes("Monika") || c.name.includes("Club"));
-    if (target) {
-        bridgeConfig.whatsappChatId = target.id._serialized;
-        bridgeConfig.groupName = target.name;
-        console.log(`📢 Canal vinculado: ${target.name} | ID: ${target.id._serialized}`);
-    }
+    try {
+        const chats = await whatsappClient.getChats();
+        const target = chats.find(c => c.name.includes("Monika") || c.name.includes("Club"));
+        if (target) {
+            bridgeConfig.whatsappChatId = target.id._serialized;
+            bridgeConfig.groupName = target.name;
+            console.log(`📢 Vinculado a: ${target.name}`);
+        }
+    } catch (e) { console.log("Error buscando chat inicial:", e.message); }
 });
 
-// Escuchar mensajes (De otros y tuyos como admin)
+whatsappClient.on('auth_failure', msg => {
+    console.error('❌ Error de autenticación:', msg);
+    console.log('Reiniciando sesión...');
+});
+
 const processMsg = async (msg) => {
-    const chat = await msg.getChat();
-    if (bridgeConfig.whatsappChatId && chat.id._serialized === bridgeConfig.whatsappChatId) {
-        await sendToDiscord(msg);
-    }
+    try {
+        const fromId = msg.fromMe ? msg.to : msg.from;
+        if (bridgeConfig.whatsappChatId && fromId === bridgeConfig.whatsappChatId) {
+            lastMessages.push(msg);
+            if (lastMessages.length > 5) lastMessages.shift();
+            await sendToDiscord(msg);
+        }
+    } catch (e) { console.log("Error procesando msg:", e.message); }
 };
 
 whatsappClient.on('message', processMsg);
@@ -99,35 +121,41 @@ whatsappClient.on('message_create', processMsg);
 // --- DISCORD ---
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
-
-    if (i.commandName === 'configurar') {
-        bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
-        await safeReply(i, `✅ Configurado. Los avisos de **${bridgeConfig.groupName}** llegarán aquí.`);
-    }
-
-    if (i.commandName === 'status') {
-        await safeReply(i, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nCanal: \`${bridgeConfig.groupName}\``);
-    }
-
-    if (i.commandName === 'ultimo') {
-        await i.deferReply();
-        const chat = await whatsappClient.getChatById(bridgeConfig.whatsappChatId).catch(() => null);
-        if (chat) {
-            const msgs = await chat.fetchMessages({ limit: 2 });
-            for (const m of msgs) await sendToDiscord(m, true);
-            await safeReply(i, "✅ Últimos avisos recuperados.");
-        } else {
-            await safeReply(i, "❌ No se pudo acceder al historial.");
+    try {
+        if (i.commandName === 'configurar') {
+            bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
+            await safeReply(i, `✅ Configurado para avisos de **${bridgeConfig.groupName}**.`);
         }
-    }
+        if (i.commandName === 'status') {
+            await safeReply(i, `📊 WA: ${isWaReady ? '✅' : '⏳'}\nGrupo: \`${bridgeConfig.groupName}\``);
+        }
+        if (i.commandName === 'ultimo') {
+            if (!i.deferred && !i.replied) await i.deferReply();
+            if (lastMessages.length > 0) {
+                for (const m of lastMessages) await sendToDiscord(m, true);
+                await safeReply(i, "✅ Mostrando avisos recientes.");
+            } else {
+                await safeReply(i, "❌ No hay avisos en memoria. Envía uno en WhatsApp.");
+            }
+        }
+    } catch (e) { console.log("Error Interaction:", e.message); }
 });
 
-whatsappClient.initialize().catch(() => {});
-discordClient.login(DISCORD_TOKEN);
+// --- INICIALIZACIÓN CON MANEJO DE ERRORES ---
+whatsappClient.initialize().catch(err => console.error("Error inicializando WA:", err.message));
+discordClient.login(DISCORD_TOKEN).catch(err => console.error("Error login Discord:", err.message));
 
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => {
     try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
 })();
+
+// Captura de rechazos no manejados para evitar crasheos (IMPORTANTE)
+process.on('unhandledRejection', error => {
+    console.error('Rechazo no manejado:', error.message);
+    if (error.message.includes('auth timeout')) {
+        console.log('Sugerencia: Haz un "Clear cache and redeploy" en Koyeb.');
+    }
+});
 
 module.exports.setQRHandler = h => { updateQR = h; };
