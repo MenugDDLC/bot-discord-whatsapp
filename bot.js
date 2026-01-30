@@ -5,7 +5,7 @@ const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-// Configuración predeterminada solicitada
+// Configuración predeterminada
 const DEFAULT_COMMUNITY_NAME = "✨📖𝑬𝒍 𝑪𝒍𝒖𝒃 𝑫𝒆 𝑴𝒐𝒏𝒊𝒌𝒂 ✒✨";
 
 let bridgeConfig = { 
@@ -14,11 +14,12 @@ let bridgeConfig = {
 };
 let isWaReady = false;
 
+// --- COMANDOS ---
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Ver estado del puente'),
     new SlashCommandBuilder()
         .setName('configurar')
-        .setDescription('Cambia el canal de Discord o el grupo de WA')
+        .setDescription('Configura el canal de Discord o cambia de chat')
         .addStringOption(option => option.setName('nombre').setDescription('Nombre del chat en WhatsApp').setRequired(false))
         .addChannelOption(option => option.setName('canal').setDescription('Canal de Discord destino').addChannelTypes(ChannelType.GuildText).setRequired(false)),
     new SlashCommandBuilder().setName('ultimo').setDescription('Muestra los 2 mensajes anteriores')
@@ -26,16 +27,33 @@ const commands = [
 
 const discordClient = new DiscordClient({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
+// --- CLIENTE WHATSAPP CON TIMEOUTS PARA KOYEB ---
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
+    qrMaxRetries: 10,
     puppeteer: {
         headless: true,
         executablePath: '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote']
+        protocolTimeout: 0, // Desactiva el timeout de protocolo para evitar el error de Runtime.evaluate
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage', 
+            '--disable-gpu',
+            '--no-zygote',
+            '--single-process',
+            '--disable-extensions',
+            '--no-first-run'
+        ]
+    },
+    // Forzamos una versión de WA Web para evitar lentitud en la carga inicial
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     }
 });
 
-// --- Lógica de Respuesta Segura ---
+// --- RESPUESTA SEGURA ---
 async function safeReply(interaction, content, isEphemeral = false) {
     try {
         const options = { content: content };
@@ -60,7 +78,7 @@ async function sendToDiscord(msg, chatName) {
         const embed = new EmbedBuilder()
             .setColor('#fb92b3') 
             .setAuthor({ name: contact.pushname || contact.number, iconURL: pfp || 'https://i.imgur.com/83p7ihD.png' })
-            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Archivo Multimedia]" : "Mensaje sin texto"))
+            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Multimedia]" : "Sin contenido"))
             .setFooter({ text: `WA: ${chatName}` })
             .setTimestamp(new Date(msg.timestamp * 1000));
 
@@ -76,17 +94,16 @@ async function sendToDiscord(msg, chatName) {
     } catch (e) { console.log("Error reenvío:", e.message); }
 }
 
-// --- Eventos ---
+// --- EVENTOS ---
 whatsappClient.on('ready', async () => {
     isWaReady = true;
     console.log('✅ WhatsApp Conectado.');
 
-    // AUTOCONFIGURACIÓN: Busca la comunidad al iniciar
     const chats = await whatsappClient.getChats().catch(() => []);
     const target = chats.find(c => c.name.includes(DEFAULT_COMMUNITY_NAME));
     if (target) {
         bridgeConfig.whatsappGroupName = target.name;
-        console.log(`📢 Comunidad "${target.name}" vinculada automáticamente.`);
+        console.log(`📢 Comunidad "${target.name}" vinculada por defecto.`);
     }
 });
 
@@ -100,7 +117,7 @@ whatsappClient.on('message', async (msg) => {
 
 discordClient.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
-    if (!isWaReady) return await safeReply(interaction, "⏳ WhatsApp no está listo todavía.", true);
+    if (!isWaReady) return await safeReply(interaction, "⏳ WhatsApp aún cargando...", true);
 
     try {
         if (interaction.commandName === 'configurar') {
@@ -114,34 +131,5 @@ discordClient.on('interactionCreate', async interaction => {
                 if (target) bridgeConfig.whatsappGroupName = target.name;
             }
 
-            if (nuevoCanal) {
-                bridgeConfig.discordChannelId = nuevoCanal.id;
-            } else if (!bridgeConfig.discordChannelId) {
-                // Si nunca se configuró un canal, usa el actual
-                bridgeConfig.discordChannelId = interaction.channelId;
-            }
-
-            await safeReply(interaction, `✅ **Configuración Actualizada**\n📱 WA: \`${bridgeConfig.whatsappGroupName}\`\n📍 Discord: <#${bridgeConfig.discordChannelId}>`);
-        }
-
-        if (interaction.commandName === 'status') {
-            await safeReply(interaction, `📊 **Estado**\nWA: ${isWaReady ? '✅' : '⏳'}\nVinculado a: \`${bridgeConfig.whatsappGroupName || 'Buscando...'}\`\nCanal: <#${bridgeConfig.discordChannelId || 'No definido'}>`);
-        }
-    } catch (e) { console.log("Error interacción:", e.message); }
-});
-
-whatsappClient.initialize().catch(() => {});
-discordClient.login(DISCORD_TOKEN);
-
-const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-(async () => {
-    try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {}
-})();
-
-// Captura de errores para evitar que Koyeb cierre la app
-process.on('uncaughtException', (err) => console.log('Exception:', err.message));
-process.on('unhandledRejection', (reason) => console.log('Rejection:', reason));
-
-let updateQR = null;
-whatsappClient.on('qr', (qr) => { isWaReady = false; if (updateQR) updateQR(qr); });
-module.exports.setQRHandler = (handler) => { updateQR = handler; };
+            if (nuevoCanal) bridgeConfig.discordChannelId = nuevoCanal.id;
+            else if (!bridgeConfig.discordChannelId) bridgeConfig.discordChannelId = interaction
