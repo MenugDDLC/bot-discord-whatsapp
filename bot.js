@@ -271,4 +271,3 @@ process.on('SIGINT', () => {
     discordClient.destroy();
     process.exit(0);
 });
-```
