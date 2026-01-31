@@ -24,30 +24,23 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- FUNCIÓN DE REENVÍO ---
+// --- REENVÍO CON IMÁGENES PRIORITARIAS ---
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
+    
     try {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) return;
-        
-        let pushname = msg.fromMe ? "Tú (Admin)" : "Admin de la Comunidad";
-        let pfp = 'https://i.imgur.com/83p7ihD.png'; 
 
-        try {
-            if (msg.author || msg.from) {
-                const contact = await msg.getContact().catch(() => null);
-                if (contact && contact.id && contact.id._serialized) {
-                    pushname = contact.pushname || pushname;
-                    if (typeof contact.getProfilePicUrl === 'function') {
-                        const url = await contact.getProfilePicUrl().catch(() => null);
-                        if (url) pfp = url;
-                    }
-                }
-            }
-        } catch (e) {}
+        const contact = await msg.getContact().catch(() => null);
+        let pushname = msg.fromMe ? "Tú (Admin)" : (contact?.pushname || "Admin de la Comunidad");
+        let pfp = 'https://i.imgur.com/83p7ihD.png';
 
-        const text = msg.body && msg.body.trim().length > 0 ? msg.body : (msg.hasMedia ? "🖼️ [Archivo Multimedia]" : "📢 Nuevo Aviso");
+        if (contact && typeof contact.getProfilePicUrl === 'function') {
+            pfp = await contact.getProfilePicUrl().catch(() => pfp);
+        }
+
+        const text = msg.body?.trim() || (msg.hasMedia ? "🖼️ [Imagen/Multimedia]" : "📢 Nuevo Aviso");
 
         const embed = new EmbedBuilder()
             .setColor(isHistory ? '#5865F2' : '#fb92b3')
@@ -57,14 +50,19 @@ async function sendToDiscord(msg, isHistory = false) {
 
         let files = [];
         if (msg.hasMedia) {
+            // Descarga la imagen sin límites de tiempo para asegurar que llegue
             const media = await msg.downloadMedia().catch(() => null);
             if (media && media.data) {
-                files.push(new AttachmentBuilder(Buffer.from(media.data, 'base64'), { name: 'archivo.png' }));
+                const attachment = new AttachmentBuilder(Buffer.from(media.data, 'base64'), { name: 'archivo.png' });
+                files.push(attachment);
                 embed.setImage('attachment://archivo.png');
             }
         }
-        await channel.send({ embeds: [embed], files }).catch(() => null);
-    } catch (e) { console.log("Error reenvío:", e.message); }
+
+        await channel.send({ embeds: [embed], files }).catch(console.error);
+    } catch (e) {
+        console.log("Error en reenvío:", e.message);
+    }
 }
 
 whatsappClient.on('qr', qr => { if (updateQR) updateQR(qr); });
@@ -74,28 +72,32 @@ whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WA Conecta
 whatsappClient.on('message_create', async (msg) => {
     try {
         const chatId = msg.fromMe ? msg.to : msg.from;
-        const chat = await msg.getChat().catch(() => ({ name: "" }));
+        
+        // Verificamos si es el chat de avisos por ID o por Nombre
+        const chat = await msg.getChat().catch(() => null);
+        const isTarget = (chatId === bridgeConfig.whatsappChatId) || 
+                         (chat && (chat.name.includes("Monika") || chat.name.includes("Club")));
 
-        // Si es el ID guardado O el nombre coincide (Monika/Club)
-        if (chatId === bridgeConfig.whatsappChatId || chat.name.includes("Monika") || chat.name.includes("Club")) {
+        if (isTarget) {
             if (chatId !== bridgeConfig.whatsappChatId) bridgeConfig.whatsappChatId = chatId;
             
             lastMessages.push(msg);
-            if (lastMessages.length > 5) lastMessages.shift();
+            if (lastMessages.length > 10) lastMessages.shift();
             
+            // Enviamos el mensaje (incluyendo imágenes)
             await sendToDiscord(msg);
         }
     } catch (e) { console.log("Error msg:", e.message); }
 });
 
-// --- COMANDOS DE DISCORD ---
+// --- COMANDOS DE DISCORD (TODOS INTACTOS) ---
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
     await i.deferReply().catch(() => null);
 
     if (i.commandName === 'configurar') {
         bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
-        await i.editReply(`✅ Canal configurado. Reenviaré avisos aquí.`);
+        await i.editReply(`✅ Canal de avisos configurado.`);
     }
     
     if (i.commandName === 'status') {
@@ -104,10 +106,11 @@ discordClient.on('interactionCreate', async i => {
 
     if (i.commandName === 'ultimo') {
         if (lastMessages.length > 0) {
-            // Reenvía los últimos 2 mensajes de la memoria
-            const toSend = lastMessages.slice(-2);
-            for (const m of toSend) await sendToDiscord(m, true);
-            await i.editReply("✅ Últimos 2 mensajes reenviados.");
+            const aEnviar = lastMessages.slice(-2);
+            for (const m of aEnviar) {
+                await sendToDiscord(m, true);
+            }
+            await i.editReply("✅ Últimos 2 mensajes reenviados (incluyendo imágenes).");
         } else {
             await i.editReply("❌ No hay mensajes en memoria.");
         }
@@ -115,9 +118,9 @@ discordClient.on('interactionCreate', async i => {
 });
 
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Ver estado'),
+    new SlashCommandBuilder().setName('status').setDescription('Ver estado del bot'),
     new SlashCommandBuilder().setName('ultimo').setDescription('Ver últimos 2 mensajes'),
-    new SlashCommandBuilder().setName('configurar').setDescription('Vincular canal').addChannelOption(o => o.setName('canal').setDescription('Canal').addChannelTypes(ChannelType.GuildText).setRequired(true))
+    new SlashCommandBuilder().setName('configurar').setDescription('Vincular canal de avisos').addChannelOption(o => o.setName('canal').setDescription('Canal').addChannelTypes(ChannelType.GuildText).setRequired(true))
 ].map(c => c.toJSON());
 
 whatsappClient.initialize().catch(() => {});
@@ -127,3 +130,4 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => { try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {} })();
 
 module.exports.setQRHandler = h => { updateQR = h; };
+    
