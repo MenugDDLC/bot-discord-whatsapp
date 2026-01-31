@@ -4,12 +4,10 @@ const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const TARGET_CHAT_ID = "120363311667281009@g.us"; 
 
 let lastMessages = [];
-let bridgeConfig = { 
-    whatsappChatId: "120363311667281009@g.us", 
-    discordChannelId: null 
-};
+let bridgeConfig = { discordChannelId: null };
 let isWaReady = false;
 let updateQR = null;
 
@@ -24,14 +22,13 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- REENVÍO CON IMÁGENES PRIORITARIAS ---
+// --- FUNCIÓN DE REENVÍO ---
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
-    
     try {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) return;
-
+        
         const contact = await msg.getContact().catch(() => null);
         let pushname = msg.fromMe ? "Tú (Admin)" : (contact?.pushname || "Admin de la Comunidad");
         let pfp = 'https://i.imgur.com/83p7ihD.png';
@@ -50,84 +47,85 @@ async function sendToDiscord(msg, isHistory = false) {
 
         let files = [];
         if (msg.hasMedia) {
-            // Descarga la imagen sin límites de tiempo para asegurar que llegue
             const media = await msg.downloadMedia().catch(() => null);
             if (media && media.data) {
-                const attachment = new AttachmentBuilder(Buffer.from(media.data, 'base64'), { name: 'archivo.png' });
-                files.push(attachment);
+                files.push(new AttachmentBuilder(Buffer.from(media.data, 'base64'), { name: 'archivo.png' }));
                 embed.setImage('attachment://archivo.png');
             }
         }
 
-        await channel.send({ embeds: [embed], files }).catch(console.error);
-    } catch (e) {
-        console.log("Error en reenvío:", e.message);
-    }
+        await channel.send({ embeds: [embed], files }).catch(() => null);
+    } catch (e) { console.log("Error enviando a Discord:", e.message); }
 }
 
 whatsappClient.on('qr', qr => { if (updateQR) updateQR(qr); });
-whatsappClient.on('ready', () => { isWaReady = true; console.log('✅ WA Conectado'); });
+whatsappClient.on('ready', () => { 
+    isWaReady = true; 
+    console.log('✅ WhatsApp está conectado y listo.'); 
+});
 
-// --- PROCESADOR DE MENSAJES ---
+// --- PROCESADOR CON LOGS EN CONSOLA ---
 whatsappClient.on('message_create', async (msg) => {
     try {
         const chatId = msg.fromMe ? msg.to : msg.from;
         
-        // Verificamos si es el chat de avisos por ID o por Nombre
-        const chat = await msg.getChat().catch(() => null);
-        const isTarget = (chatId === bridgeConfig.whatsappChatId) || 
-                         (chat && (chat.name.includes("Monika") || chat.name.includes("Club")));
+        // Verificamos si es el chat objetivo
+        if (chatId === TARGET_CHAT_ID) {
+            // LOG EN CONSOLA (Lo verás en Koyeb)
+            const autor = msg.fromMe ? "YO (Admin)" : "Otro Admin";
+            console.log(`\n--------------------------------------`);
+            console.log(`📩 MENSAJE RECIBIDO EN WHATSAPP`);
+            console.log(`👤 Autor: ${autor}`);
+            console.log(`💬 Contenido: ${msg.body || "[Sin texto / Multimedia]"}`);
+            console.log(`--------------------------------------\n`);
 
-        if (isTarget) {
-            if (chatId !== bridgeConfig.whatsappChatId) bridgeConfig.whatsappChatId = chatId;
-            
+            // Guardamos en memoria para /ultimo
             lastMessages.push(msg);
             if (lastMessages.length > 10) lastMessages.shift();
-            
-            // Enviamos el mensaje (incluyendo imágenes)
+
+            // Enviamos a Discord
             await sendToDiscord(msg);
         }
-    } catch (e) { console.log("Error msg:", e.message); }
+    } catch (e) { console.log("Error procesando mensaje:", e.message); }
 });
 
-// --- COMANDOS DE DISCORD (TODOS INTACTOS) ---
+// --- COMANDOS DISCORD ---
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
     await i.deferReply().catch(() => null);
 
-    if (i.commandName === 'configurar') {
-        bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
-        await i.editReply(`✅ Canal de avisos configurado.`);
-    }
-    
-    if (i.commandName === 'status') {
-        await i.editReply(`📊 **WA:** ${isWaReady ? 'Conectado ✅' : '⏳'}\nID: \`${bridgeConfig.whatsappChatId}\``);
-    }
-
-    if (i.commandName === 'ultimo') {
-        if (lastMessages.length > 0) {
-            const aEnviar = lastMessages.slice(-2);
-            for (const m of aEnviar) {
-                await sendToDiscord(m, true);
-            }
-            await i.editReply("✅ Últimos 2 mensajes reenviados (incluyendo imágenes).");
-        } else {
-            await i.editReply("❌ No hay mensajes en memoria.");
+    try {
+        if (i.commandName === 'configurar') {
+            bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
+            await i.editReply(`✅ Canal vinculado.`);
         }
-    }
+        
+        if (i.commandName === 'status') {
+            await i.editReply(`📊 WA: ${isWaReady ? '✅' : '⏳'}`);
+        }
+
+        if (i.commandName === 'ultimo') {
+            if (lastMessages.length > 0) {
+                const toSend = lastMessages.slice(-2);
+                for (const m of toSend) await sendToDiscord(m, true);
+                await i.editReply("✅ Últimos 2 reenviados.");
+            } else {
+                await i.editReply("❌ Memoria vacía.");
+            }
+        }
+    } catch (e) { console.log("Error interacción:", e.message); }
 });
 
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Ver estado del bot'),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Ver últimos 2 mensajes'),
-    new SlashCommandBuilder().setName('configurar').setDescription('Vincular canal de avisos').addChannelOption(o => o.setName('canal').setDescription('Canal').addChannelTypes(ChannelType.GuildText).setRequired(true))
+    new SlashCommandBuilder().setName('status').setDescription('Estado'),
+    new SlashCommandBuilder().setName('ultimo').setDescription('Ultimos 2'),
+    new SlashCommandBuilder().setName('configurar').setDescription('Configurar').addChannelOption(o => o.setName('canal').setDescription('Canal').addChannelTypes(ChannelType.GuildText).setRequired(true))
 ].map(c => c.toJSON());
 
-whatsappClient.initialize().catch(() => {});
+whatsappClient.initialize().catch(e => console.log("Init Error:", e.message));
 discordClient.login(DISCORD_TOKEN);
 
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => { try { await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands }); } catch (e) {} })();
 
 module.exports.setQRHandler = h => { updateQR = h; };
-    
