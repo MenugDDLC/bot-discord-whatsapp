@@ -31,67 +31,49 @@ const whatsappClient = new WhatsAppClient({
     }
 });
 
-// --- COLA DE PROCESAMIENTO RÁPIDO ---
 async function processMessageQueue() {
     if (isProcessing || messageQueue.length === 0) return;
-    
     isProcessing = true;
-    
     while (messageQueue.length > 0) {
         const msg = messageQueue.shift();
         await sendToDiscord(msg).catch(err => console.log("Error en cola:", err.message));
-        
-        // Pequeño delay para evitar rate limits de Discord (250ms es muy rápido)
         await new Promise(resolve => setTimeout(resolve, 250));
     }
-    
     isProcessing = false;
 }
 
-// --- FUNCIÓN DE REENVÍO OPTIMIZADA ---
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) {
         console.log("⚠️ No hay canal configurado, mensaje no enviado");
         return;
     }
-    
     try {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) {
             console.log("⚠️ Canal no encontrado");
             return;
         }
-        
-        // Optimización: obtener contacto e imagen en paralelo
         const [contact, mediaData] = await Promise.all([
             msg.getContact().catch(() => null),
             msg.hasMedia ? msg.downloadMedia().catch(() => null) : Promise.resolve(null)
         ]);
-
         let pushname = msg.fromMe ? "Tú (Admin)" : (contact?.pushname || "Admin de la Comunidad");
         let pfp = 'https://i.imgur.com/83p7ihD.png';
-
-        // Obtener foto de perfil (no bloqueante)
         if (contact && typeof contact.getProfilePicUrl === 'function') {
             pfp = await contact.getProfilePicUrl().catch(() => pfp);
         }
-
         const text = msg.body?.trim() || (msg.hasMedia ? "🖼️ [Imagen/Multimedia]" : "📢 Nuevo Aviso");
-
         const embed = new EmbedBuilder()
             .setColor(isHistory ? '#5865F2' : '#fb92b3')
             .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "📢 ") + pushname, iconURL: pfp })
-            .setDescription(text.substring(0, 4096)) // Limitar a 4096 caracteres
+            .setDescription(text.substring(0, 4096))
             .setTimestamp(new Date(msg.timestamp * 1000));
-
         let files = [];
         if (mediaData && mediaData.data) {
             try {
                 const buffer = Buffer.from(mediaData.data, 'base64');
                 const extension = mediaData.mimetype.split('/')[1] || 'png';
                 files.push(new AttachmentBuilder(buffer, { name: `archivo.${extension}` }));
-                
-                // Solo setear imagen si es una imagen
                 if (mediaData.mimetype.startsWith('image/')) {
                     embed.setImage(`attachment://archivo.${extension}`);
                 }
@@ -99,10 +81,8 @@ async function sendToDiscord(msg, isHistory = false) {
                 console.log("Error procesando multimedia:", e.message);
             }
         }
-
         await channel.send({ embeds: [embed], files });
         console.log(`✅ Mensaje enviado a Discord en ${Date.now() - (msg.timestamp * 1000)}ms`);
-        
     } catch (e) { 
         console.log("❌ Error enviando a Discord:", e.message); 
     }
@@ -131,12 +111,9 @@ whatsappClient.on('disconnected', (reason) => {
     console.log('⚠️ WhatsApp desconectado:', reason);
 });
 
-// --- PROCESADOR ULTRA-RÁPIDO CON DOBLE ESCUCHA ---
-// Escuchar AMBOS eventos para máxima velocidad
 whatsappClient.on('message', async (msg) => {
     try {
         const chatId = msg.from;
-        
         if (chatId === TARGET_CHAT_ID) {
             const autor = msg.fromMe ? "YO (Admin)" : (await msg.getContact().catch(() => ({ pushname: "Otro Admin" }))).pushname;
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -145,11 +122,8 @@ whatsappClient.on('message', async (msg) => {
             console.log(`💬 Contenido: ${msg.body || "[Sin texto / Multimedia]"}`);
             console.log(`⏱️ Timestamp: ${new Date().toLocaleTimeString()}`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-
             lastMessages.push(msg);
             if (lastMessages.length > 10) lastMessages.shift();
-
-            // Agregar a cola y procesar inmediatamente
             messageQueue.push(msg);
             processMessageQueue();
         }
@@ -161,7 +135,6 @@ whatsappClient.on('message', async (msg) => {
 whatsappClient.on('message_create', async (msg) => {
     try {
         const chatId = msg.fromMe ? msg.to : msg.from;
-        
         if (chatId === TARGET_CHAT_ID) {
             const autor = msg.fromMe ? "YO (Admin)" : "Otro Admin";
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -170,15 +143,10 @@ whatsappClient.on('message_create', async (msg) => {
             console.log(`💬 Contenido: ${msg.body || "[Sin texto / Multimedia]"}`);
             console.log(`⏱️ Timestamp: ${new Date().toLocaleTimeString()}`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-
-            // Evitar duplicados: solo agregar si no está en lastMessages
             const isDuplicate = lastMessages.some(m => m.id._serialized === msg.id._serialized);
-            
             if (!isDuplicate) {
                 lastMessages.push(msg);
                 if (lastMessages.length > 10) lastMessages.shift();
-
-                // Agregar a cola y procesar inmediatamente
                 messageQueue.push(msg);
                 processMessageQueue();
             } else {
@@ -190,15 +158,12 @@ whatsappClient.on('message_create', async (msg) => {
     }
 });
 
-// --- DISCORD READY ---
 discordClient.on('ready', () => {
     console.log(`✅ Discord conectado como: ${discordClient.user.tag}`);
 });
 
-// --- COMANDOS DISCORD ---
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
-    
     try {
         if (i.commandName === 'configurar') {
             if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -207,7 +172,6 @@ discordClient.on('interactionCreate', async i => {
                     ephemeral: true 
                 });
             }
-
             const canal = i.options.getChannel('canal');
             bridgeConfig.discordChannelId = canal.id;
             await i.reply({
@@ -216,7 +180,6 @@ discordClient.on('interactionCreate', async i => {
             });
             console.log(`⚙️ Canal configurado: ${canal.name} (${canal.id})`);
         }
-        
         if (i.commandName === 'status') {
             const statusEmbed = new EmbedBuilder()
                 .setColor(isWaReady ? '#00ff00' : '#ff0000')
@@ -229,10 +192,8 @@ discordClient.on('interactionCreate', async i => {
                     { name: '🎯 Chat objetivo', value: `\`${TARGET_CHAT_ID}\``, inline: false }
                 )
                 .setTimestamp();
-
             await i.reply({ embeds: [statusEmbed], ephemeral: true });
         }
-
         if (i.commandName === 'ultimo') {
             if (lastMessages.length > 0) {
                 await i.deferReply({ ephemeral: true });
@@ -245,7 +206,6 @@ discordClient.on('interactionCreate', async i => {
                 await i.reply({ content: "❌ No hay mensajes en memoria.", ephemeral: true });
             }
         }
-
         if (i.commandName === 'limpiar_cola') {
             if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
                 return await i.reply({ 
@@ -253,7 +213,6 @@ discordClient.on('interactionCreate', async i => {
                     ephemeral: true 
                 });
             }
-
             const count = messageQueue.length;
             messageQueue = [];
             await i.reply({ 
@@ -261,7 +220,6 @@ discordClient.on('interactionCreate', async i => {
                 ephemeral: true 
             });
         }
-
     } catch (e) { 
         console.log("Error en comando:", e.message);
         await i.reply({ content: '❌ Error ejecutando comando', ephemeral: true }).catch(() => {});
@@ -272,11 +230,9 @@ const commands = [
     new SlashCommandBuilder()
         .setName('status')
         .setDescription('Ver estado del bot y estadísticas'),
-    
     new SlashCommandBuilder()
         .setName('ultimo')
         .setDescription('Reenviar últimos 2 mensajes del historial'),
-    
     new SlashCommandBuilder()
         .setName('configurar')
         .setDescription('Configurar canal de Discord')
@@ -287,14 +243,12 @@ const commands = [
                 .setRequired(true)
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    
     new SlashCommandBuilder()
         .setName('limpiar_cola')
         .setDescription('Limpiar la cola de mensajes pendientes')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(c => c.toJSON());
 
-// --- INICIALIZACIÓN ---
 whatsappClient.initialize().catch(e => console.log("Init Error:", e.message));
 discordClient.login(DISCORD_TOKEN).catch(e => console.log("Discord Login Error:", e.message));
 
@@ -311,10 +265,10 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
 module.exports.setQRHandler = h => { updateQR = h; };
 
-// Manejo de cierre graceful
 process.on('SIGINT', () => {
     console.log('\n🛑 Cerrando bot...');
     whatsappClient.destroy();
     discordClient.destroy();
     process.exit(0);
 });
+```
