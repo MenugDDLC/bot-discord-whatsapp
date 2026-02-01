@@ -1,32 +1,36 @@
 FROM node:18-bullseye
 
-# Instalar dependencias esenciales para Puppeteer/Chromium
+# 1. Instalar dependencias esenciales para Puppeteer y Chromium 
 RUN apt-get update && apt-get install -y \
     chromium \
-    fonts-liberation \
-    libasound2 \
-    libnss3 \
-    xdg-utils \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    fonts-kacst \
+    fonts-freefont-ttf \
+    libxss1 \
+    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Variables de entorno críticas
+# 2. Variables de entorno críticas 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PORT=8080
 
 WORKDIR /app
 
-# Instalar dependencias
+# 3. Instalar dependencias primero (aprovecha el cache de capas) 
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# Copiar el resto del código
+# 4. Corregir error de copiado (el punto debe estar separado) [cite: 1, 2]
 COPY . .
 
-# Permisos para persistencia de sesión
+# 5. Permisos para persistencia de sesión 
 RUN mkdir -p .wwebjs_auth .wwebjs_cache && chmod -R 777 .wwebjs_auth .wwebjs_cache
 
-# Koyeb usa a menudo el puerto 8080 por defecto
+# 6. Exponer puerto 
 EXPOSE 8080
 
+# 7. Ejecutar el servidor web (que a su vez arranca el bot) 
 CMD ["node", "index.js"]
