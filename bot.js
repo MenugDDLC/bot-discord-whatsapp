@@ -25,7 +25,6 @@ const whatsappClient = new WhatsAppClient({
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
         headless: true,
-        // ⚡ OPTIMIZACIÓN DE MEMORIA CRÍTICA
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -33,15 +32,15 @@ const whatsappClient = new WhatsAppClient({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process', // Reduce múltiples procesos a uno solo
+            '--single-process', 
             '--disable-gpu',
             '--disable-extensions',
-            '--js-flags="--max-old-space-size=350"' // Limita RAM de JS a 350MB
+            '--js-flags="--max-old-space-size=350"'
         ],
     }
 });
 
-// --- LÓGICA DE REENVÍO ---
+// --- REENVÍO DE MENSAJES ---
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
     try {
@@ -71,7 +70,7 @@ async function sendToDiscord(msg, isHistory = false) {
     } catch (e) { console.log("⚠️ Error Bridge:", e.message); }
 }
 
-// --- EVENTOS ---
+// --- EVENTOS WHATSAPP ---
 whatsappClient.on('qr', qr => { if (updateQR) updateQR(qr); });
 whatsappClient.on('ready', () => { isWaReady = true; if (updateQR) updateQR(null); });
 
@@ -83,31 +82,45 @@ whatsappClient.on('message_create', async (msg) => {
         const participant = chat.participants?.find(p => p.id._serialized === contact.id._serialized);
         if (participant?.isAdmin || participant?.isSuperAdmin || msg.fromMe) {
             lastMessages.push(msg);
-            if (lastMessages.length > 5) lastMessages.shift(); // Bajamos historial a 5 para ahorrar RAM
+            if (lastMessages.length > 5) lastMessages.shift();
             sendToDiscord(msg);
         }
     } catch (e) {}
 });
 
-// --- COMANDOS DISCORD ---
+// --- COMANDOS DISCORD (CORREGIDOS) ---
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Estado del bot'),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Reenvía últimos mensajes'),
-    new SlashCommandBuilder().setName('configurar').setDescription('Configurar canal')
+    new SlashCommandBuilder().setName('status').setDescription('Muestra si el bot está conectado'),
+    new SlashCommandBuilder().setName('ultimo').setDescription('Reenvía los últimos mensajes del grupo'),
+    new SlashCommandBuilder().setName('configurar').setDescription('Configura el canal de destino')
         .addChannelOption(o => o.setName('canal').setDescription('Canal de Discord').setRequired(true).addChannelTypes(ChannelType.GuildText))
 ].map(c => c.toJSON());
 
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
-    if (i.commandName === 'configurar') {
-        bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
-        await i.reply({ content: '✅ Canal configurado.', ephemeral: true });
-    }
-    if (i.commandName === 'status') {
-        await i.reply({ content: `WhatsApp: ${isWaReady ? '✅' : '⏳'}`, ephemeral: true });
+
+    try {
+        if (i.commandName === 'configurar') {
+            bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
+            return await i.reply({ content: `✅ Configurado en <#${bridgeConfig.discordChannelId}>`, flags: [64] });
+        }
+        
+        if (i.commandName === 'status') {
+            const status = isWaReady ? 'Conectado ✅' : 'Esperando QR ⏳';
+            return await i.reply({ content: `WhatsApp: ${status}`, flags: [64] });
+        }
+
+        if (i.commandName === 'ultimo') {
+            if (lastMessages.length === 0) return await i.reply({ content: 'No hay mensajes.', flags: [64] });
+            await i.reply({ content: 'Enviando...', flags: [64] });
+            for (const m of lastMessages.slice(-2)) await sendToDiscord(m, true);
+        }
+    } catch (e) {
+        console.error("Error interacción:", e.message);
     }
 });
 
+// --- ARRANQUE ---
 (async () => {
     try {
         await discordClient.login(DISCORD_TOKEN);
