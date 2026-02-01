@@ -6,7 +6,6 @@ const {
 } = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
-// --- 1. CONFIGURACIÓN Y ESTADO ---
 const TARGET_CHAT_ID = process.env.TARGET_CHAT_ID;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -14,124 +13,106 @@ const CLIENT_ID = process.env.CLIENT_ID;
 let lastMessages = [];
 let bridgeConfig = { discordChannelId: null };
 let isWaReady = false;
-let updateQR = null; // Función vinculada desde index.js
+let updateQR = null; 
 
-console.log('🚀 Iniciando Bot Bridge de alta velocidad...');
-
-// --- 2. CLIENTES ---
 const discordClient = new DiscordClient({ 
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] 
 });
 
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
-    authTimeoutMs: 0, // Evita el error "auth timeout"
+    authTimeoutMs: 0, // ⚡ Solución al error: espera el QR sin límite de tiempo
     puppeteer: {
         headless: true,
-        args: [
-            '--no-sandbox', '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage', '--disable-gpu'
-        ],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
 });
 
-// --- 3. FUNCIONES DE APOYO ---
+// --- Lógica de Reenvío Rápido ---
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
-    
     try {
         const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
         if (!channel) return;
 
         const [contact, media] = await Promise.all([
-            msg.getContact().catch(() => ({ pushname: 'Desconocido' })),
+            msg.getContact().catch(() => ({ pushname: 'Usuario' })),
             msg.hasMedia ? msg.downloadMedia().catch(() => null) : Promise.resolve(null)
         ]);
 
-        const pushname = msg.fromMe ? "Tú (Admin)" : (contact.pushname || contact.number || "Admin");
-        const text = msg.body?.trim() || (msg.hasMedia ? "🖼️ [Multimedia]" : "📢 Nuevo Mensaje");
-
+        const pushname = msg.fromMe ? "Tú (Admin)" : (contact.pushname || "Admin");
         const embed = new EmbedBuilder()
-            .setColor(isHistory ? '#5865F2' : '#fb92b3')
-            .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "📢 ") + pushname, iconURL: 'https://i.imgur.com/83p7ihD.png' })
-            .setDescription(text.substring(0, 4096))
+            .setColor(isHistory ? '#5865F2' : '#25D366')
+            .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "📢 ") + pushname })
+            .setDescription(msg.body || (msg.hasMedia ? "🖼️ [Archivo]" : "Mensaje vacío"))
             .setTimestamp(new Date(msg.timestamp * 1000));
 
         let files = [];
         if (media?.data) {
-            const buffer = Buffer.from(media.data, 'base64');
-            const ext = media.mimetype.split('/')[1]?.split(';')[0] || 'png';
-            const fileName = `archivo.${ext}`;
-            files.push(new AttachmentBuilder(buffer, { name: fileName }));
-            if (media.mimetype.startsWith('image/')) embed.setImage(`attachment://${fileName}`);
+            const attachment = new AttachmentBuilder(Buffer.from(media.data, 'base64'), { name: 'archivo.png' });
+            files.push(attachment);
+            if (media.mimetype.startsWith('image/')) embed.setImage('attachment://archivo.png');
         }
 
         await channel.send({ embeds: [embed], files });
-    } catch (e) { console.log("❌ Error Bridge:", e.message); }
+    } catch (e) { console.error("❌ Error enviando a Discord:", e.message); }
 }
 
-// --- 4. EVENTOS WHATSAPP ---
+// --- Eventos WhatsApp ---
 whatsappClient.on('qr', qr => { 
-    console.log("🔲 Nuevo QR generado. Actualizando Dashboard...");
+    console.log("🔲 QR Generado. Visualízalo en el navegador.");
     if (updateQR) updateQR(qr); 
 });
 
 whatsappClient.on('ready', () => {
     isWaReady = true;
-    console.log('✅ WhatsApp Conectado');
     if (updateQR) updateQR(null); 
+    console.log('✅ WhatsApp listo y conectado');
 });
 
 whatsappClient.on('message_create', async (msg) => {
-    if (msg.to !== TARGET_CHAT_ID && msg.from !== TARGET_CHAT_ID) return;
-    if (msg.isStatus) return;
-
-    try {
-        const chat = await msg.getChat();
-        const contact = await msg.getContact();
-        const participant = chat.participants?.find(p => p.id._serialized === contact.id._serialized);
-        const esAdmin = participant?.isAdmin || participant?.isSuperAdmin || msg.fromMe;
-
-        if (esAdmin) {
-            lastMessages.push(msg);
-            if (lastMessages.length > 10) lastMessages.shift();
-            sendToDiscord(msg);
-        }
-    } catch (e) { console.log("❌ Error mensaje:", e.message); }
-});
-
-// --- 5. EVENTOS DISCORD ---
-discordClient.on('interactionCreate', async i => {
-    if (!i.isChatInputCommand()) return;
-
-    if (i.commandName === 'configurar') {
-        const canal = i.options.getChannel('canal');
-        bridgeConfig.discordChannelId = canal.id;
-        await i.reply({ content: `✅ Canal fijado en <#${canal.id}>`, ephemeral: true });
-    }
+    if (msg.from !== TARGET_CHAT_ID && msg.to !== TARGET_CHAT_ID) return;
+    const chat = await msg.getChat();
+    const contact = await msg.getContact();
+    const participant = chat.participants?.find(p => p.id._serialized === contact.id._serialized);
     
-    if (i.commandName === 'status') {
-        await i.reply({ content: `📱 WhatsApp: ${isWaReady ? '✅' : '❌'}\n🔗 Canal: ${bridgeConfig.discordChannelId ? '✅' : '❌'}`, ephemeral: true });
+    if (participant?.isAdmin || participant?.isSuperAdmin || msg.fromMe) {
+        lastMessages.push(msg);
+        if (lastMessages.length > 10) lastMessages.shift();
+        sendToDiscord(msg);
     }
 });
 
-// --- 6. COMANDOS ---
+// --- Comandos Discord ---
 const commands = [
     new SlashCommandBuilder().setName('status').setDescription('Estado del bot'),
-    new SlashCommandBuilder().setName('configurar').setDescription('Configurar canal').addChannelOption(o => o.setName('canal').setRequired(true).addChannelTypes(ChannelType.GuildText).setDescription('Canal de texto'))
+    new SlashCommandBuilder().setName('ultimo').setDescription('Reenviar últimos 2 mensajes'),
+    new SlashCommandBuilder().setName('configurar').setDescription('Configurar canal')
+        .addChannelOption(o => o.setName('canal').setRequired(true).addChannelTypes(ChannelType.GuildText))
 ].map(c => c.toJSON());
 
-// --- 7. INICIO ---
+discordClient.on('interactionCreate', async i => {
+    if (!i.isChatInputCommand()) return;
+    if (i.commandName === 'configurar') {
+        bridgeConfig.discordChannelId = i.options.getChannel('canal').id;
+        await i.reply({ content: '✅ Canal configurado.', ephemeral: true });
+    }
+    if (i.commandName === 'status') {
+        await i.reply({ content: `Estado: ${isWaReady ? 'Conectado ✅' : 'Esperando QR ❌'}`, ephemeral: true });
+    }
+});
+
+// --- Inicialización ---
 (async () => {
     try {
         await discordClient.login(DISCORD_TOKEN);
         const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        whatsappClient.initialize();
-    } catch (e) { console.error("❌ Error inicio:", e); }
+        whatsappClient.initialize().catch(e => console.error("Error inicializando WA:", e));
+    } catch (e) { console.error("Error de arranque:", e); }
 })();
 
-// EXPORTACIÓN PARA INDEX.JS
+// Exportación vital para index.js
 module.exports = {
-    setQRHandler: (handler) => { updateQR = handler; }
+    setQRHandler: (h) => { updateQR = h; }
 };
