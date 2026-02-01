@@ -1,15 +1,29 @@
 require('dotenv').config();
-const { Client: DiscordClient, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { 
+    Client: DiscordClient, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    AttachmentBuilder, 
+    ChannelType, 
+    PermissionFlagsBits 
+} = require('discord.js');
 const { Client: WhatsAppClient, LocalAuth } = require('whatsapp-web.js');
 
-if (!process.env.DISCORD_TOKEN || !process.env.CLIENT_ID) {
-    console.error('❌ ERROR: Faltan variables de entorno');
+// --- VALIDACIÓN DE ENTORNO ---
+const REQUIRED_ENV = ['DISCORD_TOKEN', 'CLIENT_ID', 'TARGET_CHAT_ID'];
+const missingEnv = REQUIRED_ENV.filter(key => !process.env[key]);
+
+if (missingEnv.length > 0) {
+    console.error(`❌ ERROR: Faltan variables de entorno: ${missingEnv.join(', ')}`);
     process.exit(1);
 }
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const TARGET_CHAT_ID = "120363302612091643@g.us";
+const TARGET_CHAT_ID = process.env.TARGET_CHAT_ID; // "120363302612091643@g.us"
 
 let lastMessages = [];
 let bridgeConfig = { discordChannelId: null };
@@ -18,61 +32,104 @@ let updateQR = null;
 
 console.log('🚀 Iniciando bot...');
 
+// --- CLIENTE DISCORD ---
 const discordClient = new DiscordClient({ 
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] 
 });
 
+// --- CONFIGURACIÓN PUPPETEER ---
+const puppeteerConfig = {
+    headless: true,
+    args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox', 
+        '--disable-dev-shm-usage', 
+        '--disable-gpu', 
+        '--no-zygote', 
+        '--single-process',
+        '--disable-extensions'
+    ],
+    timeout: 0
+};
+
+// Solo agregar executablePath si está definido en el .env (para evitar errores en Windows/Mac)
+if (process.env.CHROMIUM_PATH) {
+    puppeteerConfig.executablePath = process.env.CHROMIUM_PATH;
+}
+
+// --- CLIENTE WHATSAPP ---
 const whatsappClient = new WhatsAppClient({
     authStrategy: new LocalAuth(),
-    authTimeoutMs: 60000, // 60 segundos
-    puppeteer: {
-        headless: true,
-        executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-        args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox', 
-            '--disable-dev-shm-usage', 
-            '--disable-gpu', 
-            '--no-zygote', 
-            '--single-process',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--disable-extensions'
-        ],
-        timeout: 0
-    },
+    authTimeoutMs: 60000,
+    puppeteer: puppeteerConfig,
     qrMaxRetries: 5
 });
+
+/**
+ * Función auxiliar para descargar media con timeout
+ * Evita que el bot se congele si WA tarda en responder
+ */
+async function downloadMediaWithTimeout(msg, timeoutMs = 10000) {
+    if (!msg.hasMedia) return null;
+    
+    const downloadPromise = msg.downloadMedia();
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout descargando media')), timeoutMs)
+    );
+
+    try {
+        return await Promise.race([downloadPromise, timeoutPromise]);
+    } catch (e) {
+        console.warn(`⚠️ No se pudo descargar media: ${e.message}`);
+        return null;
+    }
+}
 
 async function sendToDiscord(msg, isHistory = false) {
     if (!bridgeConfig.discordChannelId) return;
     const startTime = Date.now();
+    
     try {
-        const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId);
-        if (!channel) return;
+        const channel = await discordClient.channels.fetch(bridgeConfig.discordChannelId).catch(() => null);
+        if (!channel) {
+            console.log('⚠️ Canal de Discord no encontrado o sin permisos.');
+            return;
+        }
+
         const [contact, media] = await Promise.all([
-            msg.getContact().catch(() => null),
-            msg.hasMedia ? msg.downloadMedia().catch(() => null) : Promise.resolve(null)
+            msg.getContact().catch(() => ({ pushname: 'Desconocido' })),
+            downloadMediaWithTimeout(msg)
         ]);
-        const pushname = msg.fromMe ? "Tú (Admin)" : (contact?.pushname || "Admin");
-        let pfp = 'https://i.imgur.com/83p7ihD.png';
-        const text = msg.body?.trim() || (msg.hasMedia ? "🖼️ [Imagen/Multimedia]" : "📢 Nuevo Aviso");
+
+        const pushname = msg.fromMe ? "Tú (Bot/Admin)" : (contact.pushname || contact.number || "Admin");
+        const pfp = 'https://i.imgur.com/83p7ihD.png'; // Puedes mejorar esto buscando la foto real
+        
+        let text = msg.body?.trim();
+        if (!text && msg.hasMedia) text = "🖼️ [Imagen/Multimedia adjunta]";
+        if (!text) text = "📢 Nuevo Aviso";
+
         const embed = new EmbedBuilder()
             .setColor(isHistory ? '#5865F2' : '#fb92b3')
             .setAuthor({ name: (isHistory ? "[HISTORIAL] " : "📢 ") + pushname, iconURL: pfp })
             .setDescription(text.substring(0, 4096))
             .setFooter({ text: '✨ Aviso Oficial' })
             .setTimestamp(new Date(msg.timestamp * 1000));
+
         let files = [];
-        if (media?.data) {
+        if (media && media.data) {
             const buffer = Buffer.from(media.data, 'base64');
-            const ext = media.mimetype.split('/')[1] || 'png';
-            files.push(new AttachmentBuilder(buffer, { name: `archivo.${ext}` }));
+            const ext = media.mimetype.split('/')[1]?.split(';')[0] || 'dat';
+            const fileName = `archivo.${ext}`;
+            
+            files.push(new AttachmentBuilder(buffer, { name: fileName }));
+            
             if (media.mimetype.startsWith('image/')) {
-                embed.setImage(`attachment://archivo.${ext}`);
+                embed.setImage(`attachment://${fileName}`);
             }
         }
+
         await channel.send({ embeds: [embed], files });
+        
         const elapsed = Date.now() - startTime;
         console.log(`✅ Enviado a Discord en ${elapsed}ms`);
     } catch (e) { 
@@ -80,14 +137,14 @@ async function sendToDiscord(msg, isHistory = false) {
     }
 }
 
+// --- EVENTOS WHATSAPP ---
+
 whatsappClient.on('qr', qr => { 
     console.log("\n" + "=".repeat(50));
     console.log("🔲 ESCANEA ESTE QR CON WHATSAPP:");
     console.log("=".repeat(50) + "\n");
-    console.log(qr);
-    console.log("\n" + "=".repeat(50));
-    console.log("⏳ Esperando escaneo... (60 segundos)");
-    console.log("=".repeat(50) + "\n");
+    // require('qrcode-terminal').generate(qr, { small: true }); // Opcional: Descomenta si instalas qrcode-terminal
+    console.log("QR String:", qr);
     if (updateQR) updateQR(qr); 
 });
 
@@ -96,251 +153,175 @@ whatsappClient.on('ready', async () => {
     console.log('✅ WhatsApp CONECTADO Y LISTO');
     try {
         const chat = await whatsappClient.getChatById(TARGET_CHAT_ID);
-        console.log(`✅ Grupo encontrado: ${chat.name}`);
-        console.log(`✅ ID: ${TARGET_CHAT_ID}`);
+        console.log(`✅ Grupo objetivo vinculado: "${chat.name}"`);
     } catch (e) {
         console.log(`⚠️ Grupo no encontrado: ${TARGET_CHAT_ID}`);
-        console.log('ℹ️ Usa /listar_chats para verificar');
+        console.log('ℹ️ Asegúrate de que el ID en .env sea correcto. Usa /listar_chats');
     }
 });
 
-whatsappClient.on('authenticated', () => {
-    console.log('🔐 WhatsApp autenticado correctamente');
-});
-
-whatsappClient.on('auth_failure', (error) => {
-    console.error('❌ ERROR DE AUTENTICACIÓN:', error);
-    console.log('💡 Solución: Elimina la carpeta .wwebjs_auth y reinicia');
-});
+whatsappClient.on('authenticated', () => console.log('🔐 WhatsApp autenticado'));
+whatsappClient.on('auth_failure', err => console.error('❌ Fallo de autenticación:', err));
 
 whatsappClient.on('disconnected', (reason) => {
     isWaReady = false;
     console.log('⚠️ WhatsApp desconectado:', reason);
-    console.log('🔄 Intentando reconectar en 5 segundos...');
-    setTimeout(() => {
-        whatsappClient.initialize().catch(console.error);
-    }, 5000);
+    console.log('🔄 Reconectando en 5s...');
+    setTimeout(() => whatsappClient.initialize().catch(console.error), 5000);
 });
 
-whatsappClient.on('loading_screen', (percent, message) => {
-    console.log(`⏳ Cargando WhatsApp: ${percent}% - ${message}`);
-});
-
-whatsappClient.on('message', procesarMensaje);
-whatsappClient.on('message_create', procesarMensaje);
+whatsappClient.on('message_create', procesarMensaje); // message_create escucha mis propios mensajes también
 
 async function procesarMensaje(msg) {
-    const chatId = msg.fromMe ? msg.to : msg.from;
-    if (chatId !== TARGET_CHAT_ID) return;
-    const receivedTime = Date.now();
-    console.log(`\n⚡ MENSAJE RECIBIDO [${new Date().toLocaleTimeString()}]`);
+    // Verificar si el mensaje viene del grupo objetivo
+    if (msg.to !== TARGET_CHAT_ID && msg.from !== TARGET_CHAT_ID) return;
+
+    // Ignorar mensajes de estado (ej: "Juan salió del grupo")
+    if (msg.isStatus) return;
+
     try {
         const chat = await msg.getChat();
         const contact = await msg.getContact();
-        const participant = chat.participants.find(p => p.id._serialized === contact.id._serialized);
+        
+        // Obtener participante para ver si es admin
+        let participant = null;
+        if (chat.participants) {
+            participant = chat.participants.find(p => p.id._serialized === contact.id._serialized);
+        }
+
         const esAdmin = participant?.isAdmin || participant?.isSuperAdmin || msg.fromMe;
-        console.log(`👤 ${contact.pushname || 'Desconocido'} | Admin: ${esAdmin ? '✅' : '❌'}`);
-        console.log(`💬 ${msg.body || '[Media]'}`);
+        
         if (esAdmin) {
-            console.log(`🚀 REENVIANDO...`);
+            console.log(`⚡ Procesando mensaje de Admin: ${contact.pushname || '...'}`);
+            
+            // Guardar en memoria
             lastMessages.push(msg);
             if (lastMessages.length > 10) lastMessages.shift();
-            sendToDiscord(msg);
-            const processTime = Date.now() - receivedTime;
-            console.log(`⏱️ Procesado en ${processTime}ms\n`);
-        } else {
-            console.log(`⏭️ Ignorado (no admin)\n`);
+            
+            // Enviar
+            await sendToDiscord(msg);
         }
     } catch (e) { 
-        console.log("❌ Error procesando:", e.message); 
+        console.log("❌ Error procesando mensaje WA:", e.message); 
     }
 }
 
-discordClient.on('ready', () => {
-    console.log(`✅ Discord conectado: ${discordClient.user.tag}`);
-});
+// --- EVENTOS DISCORD ---
 
-discordClient.on('error', (error) => {
-    console.error('❌ Error de Discord:', error);
+discordClient.on('ready', () => {
+    console.log(`✅ Discord conectado como: ${discordClient.user.tag}`);
 });
 
 discordClient.on('interactionCreate', async i => {
     if (!i.isChatInputCommand()) return;
+
     try {
+        // Commando: CONFIGURAR
         if (i.commandName === 'configurar') {
             if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return await i.reply({ content: '❌ Solo admins', ephemeral: true });
+                return await i.reply({ content: '❌ Solo administradores.', ephemeral: true });
             }
             const canal = i.options.getChannel('canal');
             bridgeConfig.discordChannelId = canal.id;
-            await i.reply({
-                content: `✅ Canal: <#${canal.id}>\n⚡ Modo rápido activado`,
-                ephemeral: true
-            });
-            console.log(`⚙️ Canal configurado: ${canal.name}`);
+            await i.reply({ content: `✅ Canal configurado: <#${canal.id}>`, ephemeral: true });
+            console.log(`⚙️ Nuevo canal configurado: ${canal.name}`);
         }
-        if (i.commandName === 'status') {
+
+        // Commando: STATUS
+        else if (i.commandName === 'status') {
             const statusEmbed = new EmbedBuilder()
                 .setColor(isWaReady ? '#00ff00' : '#ff0000')
-                .setTitle('📊 Estado del Bot')
+                .setTitle('📊 Estado del Puente')
                 .addFields(
                     { name: 'WhatsApp', value: isWaReady ? '✅ Online' : '❌ Offline', inline: true },
-                    { name: 'Canal', value: bridgeConfig.discordChannelId ? `<#${bridgeConfig.discordChannelId}>` : '❌ Sin configurar', inline: true },
-                    { name: 'Memoria', value: `${lastMessages.length}/10`, inline: true },
-                    { name: 'Grupo', value: `\`${TARGET_CHAT_ID}\``, inline: false }
+                    { name: 'Canal Discord', value: bridgeConfig.discordChannelId ? `<#${bridgeConfig.discordChannelId}>` : '❌ Sin configurar', inline: true },
+                    { name: 'Cache', value: `${lastMessages.length} msgs`, inline: true },
+                    { name: 'Grupo ID', value: `\`${TARGET_CHAT_ID}\``, inline: false }
                 )
                 .setTimestamp();
             await i.reply({ embeds: [statusEmbed], ephemeral: true });
         }
-        if (i.commandName === 'ultimo') {
+
+        // Commando: ULTIMO
+        else if (i.commandName === 'ultimo') {
             if (lastMessages.length > 0) {
                 await i.deferReply({ ephemeral: true });
                 const toSend = lastMessages.slice(-2);
                 for (const m of toSend) await sendToDiscord(m, true);
-                await i.editReply("✅ Reenviados");
+                await i.editReply("✅ Historial reciente reenviado.");
             } else {
-                await i.reply({ content: "❌ Sin mensajes", ephemeral: true });
+                await i.reply({ content: "❌ No hay mensajes recientes en memoria.", ephemeral: true });
             }
         }
-        if (i.commandName === 'listar_chats') {
-            if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return await i.reply({ content: '❌ Solo admins', ephemeral: true });
-            }
-            if (!isWaReady) {
-                return await i.reply({ content: '❌ WhatsApp offline', ephemeral: true });
-            }
+
+        // Commando: LISTAR CHATS (Útil para obtener el ID)
+        else if (i.commandName === 'listar_chats') {
+            if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) return i.reply('❌ Sin permisos');
+            if (!isWaReady) return i.reply({ content: '❌ WhatsApp no está listo.', ephemeral: true });
+            
             await i.deferReply({ ephemeral: true });
-            try {
-                const chats = await whatsappClient.getChats();
-                const grupos = chats.filter(chat => chat.isGroup);
-                if (grupos.length === 0) {
-                    return await i.editReply('Sin grupos');
-                }
-                const embed = new EmbedBuilder()
-                    .setColor('#25D366')
-                    .setTitle('📱 Grupos de WhatsApp')
-                    .setDescription('🎯 = Activo')
-                    .setFooter({ text: `Total: ${grupos.length}` });
-                for (let j = 0; j < Math.min(grupos.length, 25); j++) {
-                    const grupo = grupos[j];
-                    const esObjetivo = grupo.id._serialized === TARGET_CHAT_ID ? '🎯 ' : '';
-                    embed.addFields({
-                        name: `${esObjetivo}${grupo.name}`,
-                        value: `\`${grupo.id._serialized}\``,
-                        inline: false
-                    });
-                }
-                await i.editReply({ embeds: [embed] });
-            } catch (e) {
-                await i.editReply('❌ Error');
-            }
+            const chats = await whatsappClient.getChats();
+            const grupos = chats.filter(c => c.isGroup);
+            
+            const descripcion = grupos.slice(0, 15).map(g => 
+                `${g.id._serialized === TARGET_CHAT_ID ? '🎯 ' : ''}**${g.name}**\nID: \`${g.id._serialized}\``
+            ).join('\n\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📱 Grupos Encontrados (${grupos.length})`)
+                .setDescription(descripcion || "No se encontraron grupos.")
+                .setColor('#25D366');
+            
+            await i.editReply({ embeds: [embed] });
         }
-        if (i.commandName === 'test') {
-            if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return await i.reply({ content: '❌ Solo admins', ephemeral: true });
-            }
-            if (!isWaReady) {
-                return await i.reply({ content: '❌ WhatsApp offline', ephemeral: true });
-            }
-            try {
-                await i.deferReply({ ephemeral: true });
-                const chat = await whatsappClient.getChatById(TARGET_CHAT_ID);
-                await chat.sendMessage('🧪 Test');
-                await i.editReply(`✅ Enviado`);
-            } catch (e) {
-                await i.editReply(`❌ ${e.message}`);
-            }
+    } catch (e) {
+        console.error("❌ Error en interacción:", e);
+        if (!i.replied && !i.deferred) {
+            await i.reply({ content: '❌ Ocurrió un error interno.', ephemeral: true }).catch(() => {});
         }
-        if (i.commandName === 'ver_admins') {
-            if (!i.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return await i.reply({ content: '❌ Solo admins', ephemeral: true });
-            }
-            if (!isWaReady) {
-                return await i.reply({ content: '❌ WhatsApp offline', ephemeral: true });
-            }
-            try {
-                await i.deferReply({ ephemeral: true });
-                const chat = await whatsappClient.getChatById(TARGET_CHAT_ID);
-                const admins = chat.participants.filter(p => p.isAdmin || p.isSuperAdmin);
-                const adminEmbed = new EmbedBuilder()
-                    .setColor('#FFD700')
-                    .setTitle(`👑 Admins: ${chat.name}`)
-                    .setFooter({ text: `${admins.length} admins` });
-                for (const admin of admins.slice(0, 25)) {
-                    const contact = await whatsappClient.getContactById(admin.id._serialized);
-                    const tipo = admin.isSuperAdmin ? '👑' : '🔑';
-                    adminEmbed.addFields({
-                        name: `${tipo} ${contact.pushname || contact.number}`,
-                        value: `\`${admin.id._serialized}\``,
-                        inline: true
-                    });
-                }
-                await i.editReply({ embeds: [adminEmbed] });
-            } catch (e) {
-                await i.editReply(`❌ Error: ${e.message}`);
-            }
-        }
-    } catch (e) { 
-        console.log("❌ Error:", e.message);
-        await i.reply({ content: '❌ Error', ephemeral: true }).catch(() => {});
     }
 });
 
+// --- DEFINICIÓN DE COMANDOS ---
 const commands = [
-    new SlashCommandBuilder().setName('status').setDescription('Estado'),
-    new SlashCommandBuilder().setName('ultimo').setDescription('Últimos 2'),
+    new SlashCommandBuilder().setName('status').setDescription('Ver estado del bot'),
+    new SlashCommandBuilder().setName('ultimo').setDescription('Reenviar últimos mensajes'),
     new SlashCommandBuilder()
         .setName('configurar')
-        .setDescription('Configurar')
+        .setDescription('Configura el canal de destino')
         .addChannelOption(o => o.setName('canal').setDescription('Canal').addChannelTypes(ChannelType.GuildText).setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    new SlashCommandBuilder().setName('listar_chats').setDescription('Ver grupos').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    new SlashCommandBuilder().setName('test').setDescription('Test').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    new SlashCommandBuilder().setName('ver_admins').setDescription('Ver admins').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('listar_chats').setDescription('Lista los IDs de los grupos de WhatsApp').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
-console.log('🔄 Inicializando Discord...');
-discordClient.login(DISCORD_TOKEN).catch(e => {
-    console.error('❌ ERROR Discord:', e);
-    process.exit(1);
-});
-
-console.log('🔄 Inicializando WhatsApp...');
-whatsappClient.initialize().catch(e => {
-    console.error('❌ ERROR WhatsApp:', e);
-    console.log('💡 El bot seguirá funcionando con Discord solamente');
-});
-
-const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-(async () => { 
-    try { 
-        console.log('📝 Registrando comandos...');
+// --- INICIALIZACIÓN ---
+(async () => {
+    try {
+        console.log('🔄 Conectando Discord...');
+        await discordClient.login(DISCORD_TOKEN);
+        
+        console.log('📝 Actualizando comandos (/) ...');
+        const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Comandos OK');
+        
+        console.log('🔄 Inicializando WhatsApp Web...');
+        whatsappClient.initialize().catch(e => console.error("❌ Fallo inicialización WA:", e));
     } catch (e) {
-        console.error('❌ Error comandos:', e.message);
-    } 
+        console.error('❌ Error fatal en arranque:', e);
+        process.exit(1);
+    }
 })();
 
+// Manejo de cierres y errores globales
 module.exports.setQRHandler = h => { updateQR = h; };
 
 process.on('SIGINT', () => {
-    console.log('\n🛑 Cerrando...');
+    console.log('\n🛑 Cerrando servicios...');
     whatsappClient.destroy();
     discordClient.destroy();
     process.exit(0);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Promesa rechazada:', reason);
-    if (reason === 'auth timeout') {
-        console.log('\n💡 SOLUCIÓN AL TIMEOUT:');
-        console.log('1. Elimina la carpeta .wwebjs_auth');
-        console.log('2. Reinicia el bot');
-        console.log('3. Escanea el QR rápidamente (tienes 60 segundos)\n');
-    }
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Excepción no capturada:', error);
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Promesa rechazada no manejada:', reason);
 });
