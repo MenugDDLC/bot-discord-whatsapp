@@ -11,11 +11,11 @@ app.get('/', (req, res) => {
             <html>
                 <body style="background:#1a1a2e; color:white; text-align:center; font-family:sans-serif;">
                     <h1>📱 Escanea el QR</h1>
-                    <p>Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo</p>
                     <div style="background:white; padding:20px; display:inline-block; border-radius:10px;">
                         <img src="https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(latestQR)}&size=300x300" />
                     </div>
-                    <p style="margin-top:20px; color:#e94560;">El QR se actualiza automáticamente</p>
+                    <p>Abre WhatsApp y vincula el dispositivo</p>
+                    <script>setTimeout(() => location.reload(), 10000);</script>
                 </body>
             </html>
         `);
@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
             <html>
                 <body style="background:#1a1a2e; color:white; text-align:center; font-family:sans-serif; padding-top:50px;">
                     <h1>🤖 Bot Bridge Activo</h1>
-                    <p>Esperando a que WhatsApp genere el código QR...</p>
+                    <p>Esperando QR o ya conectado...</p>
                     <script>setTimeout(() => location.reload(), 5000);</script>
                 </body>
             </html>
@@ -35,8 +35,13 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
 app.listen(port, "0.0.0.0", () => {
-    console.log(`📡 Servidor en puerto ${port}`);
-    // Pasar la función para actualizar el QR al bot
+    console.log(`📡 Servidor Express en puerto ${port}`);
+    
+    // Importamos el bot después de que el servidor inicie
     const bot = require('./bot.js');
-    bot.setQRHandler((qr) => { latestQR = qr; });
+    
+    // Le pasamos la función al bot para que actualice 'latestQR' aquí
+    bot.setQRHandler((qr) => { 
+        latestQR = qr; 
+    });
 });
